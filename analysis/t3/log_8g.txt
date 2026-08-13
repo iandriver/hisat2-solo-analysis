@@ -1,0 +1,26 @@
+Killed
+(ERR): hisat2-align exited with value 137
+Command exited with non-zero status 137
+	Command being timed: "hisat2 -x /data/human/grch38_snp/genome_snp -1 /data/t3/pbmc_1k_v3_fastqs/pbmc_1k_v3_S1_L001_R1_001.fastq.gz,/data/t3/pbmc_1k_v3_fastqs/pbmc_1k_v3_S1_L002_R1_001.fastq.gz -2 /data/t3/pbmc_1k_v3_fastqs/pbmc_1k_v3_S1_L001_R2_001.fastq.gz,/data/t3/pbmc_1k_v3_fastqs/pbmc_1k_v3_S1_L002_R2_001.fastq.gz --solo-barcode-mate 1 --solo-cb-whitelist /data/human/whitelist_v3.txt --solo-cb-len 16 --solo-umi-start 17 --solo-umi-len 12 --gene-annotation /data/human/genes.ht2gm --gene-strand Forward --solo-out-dir /data/t3/run_8g/Solo.out -p 8 --no-unal -S /dev/null"
+	User time (seconds): 4390.65
+	System time (seconds): 96.93
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:14:38
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 8349824
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2583328
+	Voluntary context switches: 9539167
+	Involuntary context switches: 1580958
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 137

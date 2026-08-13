@@ -1,0 +1,36 @@
+diff --git a/hgfm.h b/hgfm.h
+index 7e2f381..06271e7 100644
+--- a/hgfm.h
++++ b/hgfm.h
+@@ -1893,10 +1893,28 @@ void HGFM<index_t, local_index_t>::gbwt_worker(void* vp)
+                     if(tParam.alts.size() <= 1) {
+                         tParam.alts.clear();
+                     } else {
+-                        for(index_t s = 2; s < tParam.alts.size(); s += 2) {
+-                            tParam.alts[s >> 1] = tParam.alts[s];
++                        // Shed variants gently rather than halving.
++                        //
++                        // Halving surrenders 50% of a window's variants in one
++                        // step, and measurement shows windows explode 1.15-1.38
++                        // times each -- i.e. the first step almost always
++                        // overshoots from "just over budget" to "fits easily".
++                        // Removing every 8th variant instead converges on the
++                        // budget from above, at the cost of more retries.
++                        const index_t nAlts = (index_t)tParam.alts.size();
++                        if(nAlts <= 8) {                 // too few to step gently
++                            for(index_t s = 2; s < nAlts; s += 2) {
++                                tParam.alts[s >> 1] = tParam.alts[s];
++                            }
++                            tParam.alts.resize(nAlts >> 1);
++                        } else {
++                            index_t w = 0;
++                            for(index_t s = 0; s < nAlts; s++) {
++                                if((s & 7) == 7) continue;
++                                tParam.alts[w++] = tParam.alts[s];
++                            }
++                            tParam.alts.resize(w);
+                         }
+-                        tParam.alts.resize(tParam.alts.size() >> 1);
+                         tParam.haplotypes.clear();
+                         for(index_t a = 0; a < tParam.alts.size(); a++) {
+                             const ALT<index_t>& alt = tParam.alts[a];

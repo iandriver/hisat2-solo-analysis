@@ -1,0 +1,5 @@
+kg_phased	BASE	rc=0	sec=89	rss_gb=18.93	index_kb=590100	
+kg_phased	PATCHED	rc=0	sec=87	rss_gb=17.13	index_kb=589508	
+dbsnp_big4	BASE	rc=0	sec=93	rss_gb=19.60	index_kb=648580	
+dbsnp_big4	PATCHED	rc=0	sec=93	rss_gb=19.03	index_kb=649004	
+AB_DONE
