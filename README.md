@@ -95,7 +95,9 @@ ceiling of 0.983 / 0.9999.
 
 Gene and GeneFull now come from a single alignment pass (1.90x over two runs on
 a 111,600-read fixture). The three-way report predates that change and is
-annotated where superseded.
+annotated where superseded. Its inputs are in `s3://rustar-bench/` — FASTQs,
+gene model, GTF, whitelist, STAR and rustar indexes — so it can be re-run after
+rebuilding the mouse HISAT2 index from a public GRCm39 FASTA.
 
 ### Where the advantage does not appear
 

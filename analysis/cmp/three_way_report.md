@@ -2,10 +2,13 @@
 
 > **Snapshot, partially superseded.** Measured against `solo/gene-model` @
 > cc0e998. Finding 1 (no single-pass Gene+GeneFull) has since been fixed and is
-> struck through below; every other number here still stands as measured. The
-> input FASTQs and the mouse index no longer exist locally, so nothing in this
-> report can be re-run — corrections say what was re-measured elsewhere and what
-> was not.
+> struck through below; every other number here still stands as measured.
+>
+> **Re-running it is possible.** The input FASTQs, the `.ht2gm` gene model, the
+> GTF, the whitelist and the STAR/rustar indexes are all in
+> `s3://rustar-bench/` (`fastq/`, `hisat2-bench/refs/`, `idx/`). Only the GRCm39
+> genome FASTA — a public download — and the HISAT2 mouse index built from it
+> are absent, so reproducing this needs one index rebuild and nothing else.
 
 ## Setup
 
@@ -44,13 +47,14 @@ from a single alignment pass, as STARsolo and rustar do with
 only the interval query repeats, so the alignment, CIGAR and reference-block
 work is shared.
 
-**The ~103 s figure should not be quoted.** It was never re-measured on this
-dataset — the mouse FASTQs and index are gone — so there is no both-feature
-number for this table. What is measured is a 111,600-read fixture where one pass
-beat two separate runs by **1.90x**, near the 2x ceiling the shared-work argument
-predicts. The 51.2 s here remains a valid single-feature number, and the
-both-feature cost on this input should now be close to it rather than double it,
-but that is an inference from the 1.90x, not a measurement of this run.
+**The ~103 s figure should not be quoted.** It has not been re-measured on this
+dataset, so there is no both-feature number for this table. What is measured is a
+111,600-read fixture where one pass beat two separate runs by **1.90x**, near the
+2x ceiling the shared-work argument predicts. The 51.2 s here remains a valid
+single-feature number, and the both-feature cost on this input should now be
+close to it rather than double it — but that is an inference from the 1.90x, not
+a measurement of this run. The inputs are still in S3 (see the note at the top),
+so this is a gap someone chose not to close, not one that cannot be closed.
 
 Correctness of the combined pass is covered in the test suite: each matrix is
 byte-identical to the one a single-feature run produces, output does not depend
