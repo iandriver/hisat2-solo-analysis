@@ -1,0 +1,3 @@
+QUARTER   Local indexes: 1490859 of 1985316 variant instances retained (75.1%), 925 local graph(s) over the edge budget.
+BASE      Local indexes: 1605978 of 1985316 variant instances retained (80.9%), 1135 local graph(s) over the edge budget.
+BSEARCH   Local indexes: 1738053 of 1985316 variant instances retained (87.5%), 4201 local graph(s) over the edge budget.

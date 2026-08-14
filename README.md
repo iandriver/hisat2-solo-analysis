@@ -13,7 +13,7 @@ The code being measured lives on two branches there:
 
 ## Findings
 
-### Variant-aware alignment reduces reference bias (`analysis/human`, `analysis/fiveprime`)
+### Variant-aware alignment reduces reference bias (`analysis/human`, `analysis/fiveprime`, `analysis/bias`)
 
 At heterozygous sites an unbiased aligner reports ALT at 0.5. Measured on three
 donors, GIAB-verified:
@@ -53,6 +53,15 @@ loss with no format change:
 |---|---|---|
 | dbSNP b157 common | 80.9% | **87.5%** |
 | 1000G 30x phased | 92.4% | **97.8%** |
+
+**But retention barely affects alignment** (`analysis/bias`). A dose-response
+over 200,000 matched read pairs on chr1 moves the ALT fraction 0.50080 (75.1%
+retention) to 0.50087 (87.5%) — 34 sites in 200,000. The same test puts linear
+at 0.02861 against the graph's 0.50080, an effect ~6,700x larger. At 75.1%
+retention the index is already unbiased, because the global ALT list keeps every
+variant and only the local indexes lose them. So the patch is justified by
+"users get the variants they supplied" and by the reporting bug, **not** by
+better alignment — which is what was reported upstream.
 
 ### The 2^32 node bound is governed by haplotypes, not variants (`analysis/aws`)
 
@@ -99,6 +108,7 @@ analysis/t3          memory-cap titration
 analysis/filt        pseudogene variant filter and its falsification
 analysis/cmp         three-way comparison, HISAT2 / STAR / rustar
 analysis/hap         variant-retention A/B: halving vs binary search
+analysis/bias        reference-bias dose-response across retention levels
 analysis/aws         cloud build stages and reports (chr1 probe, whole-genome attempts)
 upstream/            the two upstream issue writeups
 ```

@@ -1,0 +1,13 @@
+index           REF aln    ALT aln    ALT frac      95% CI
+LINEAR           171207       5043     0.02861     0.00078
+QUARTER          170026     170574     0.50080     0.00168
+BASE             170021     170590     0.50084     0.00168
+BSEARCH          170018     170608     0.50087     0.00168
+
+paired (McNemar) on ALT alignment, same sites:
+  LINEAR     -> QUARTER    lost=77     gained=165608 net=+165531 chi2=165375.15  p<0.001
+  LINEAR     -> BASE       lost=77     gained=165624 net=+165547 chi2=165391.14  p<0.001
+  LINEAR     -> BSEARCH    lost=77     gained=165642 net=+165565 chi2=165409.14  p<0.001
+  QUARTER    -> BASE       lost=23     gained=39     net=   +16 chi2=   3.63  n.s.
+  QUARTER    -> BSEARCH    lost=51     gained=85     net=   +34 chi2=   8.01  p<0.05
+  BASE       -> BSEARCH    lost=54     gained=72     net=   +18 chi2=   2.29  n.s.
