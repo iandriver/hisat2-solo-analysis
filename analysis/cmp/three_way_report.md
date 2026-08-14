@@ -1,5 +1,12 @@
 # HISAT2-solo vs STARsolo vs rustar — mouse 10x, 10M reads
 
+> **Snapshot, partially superseded.** Measured against `solo/gene-model` @
+> cc0e998. Finding 1 (no single-pass Gene+GeneFull) has since been fixed and is
+> struck through below; every other number here still stands as measured. The
+> input FASTQs and the mouse index no longer exist locally, so nothing in this
+> report can be re-run — corrections say what was re-measured elsewhere and what
+> was not.
+
 ## Setup
 
 Identical input for all three: `5k_Mouse_PBMCs_5p_gem-x_GEX_S1_L001` R1+R2, 10,000,000
@@ -22,19 +29,34 @@ Native, same machine, same input, 16 threads.
 
 | Tool | Wall | Peak RSS | Page faults | Features per pass |
 |---|---|---|---|---|
-| HISAT2-solo | **51.2 / 51.5 / 51.8 s** | **5.18 GB** | **78–576** | 1 |
+| HISAT2-solo | **51.2 / 51.5 / 51.8 s** | **5.18 GB** | **78–576** | 1 at the time; 2 now, see below |
 | rustar | 52.1 s … 95.0 s | 25.6–28.2 GB | 1.5–3.9 M | 2 |
 | STARsolo | not runnable natively | (28.3 GB reported previously) | — | 2 |
 
 Two things matter more than the headline numbers.
 
-**HISAT2 needs two passes for Gene + GeneFull.** `--gene-feature` takes one of
-`Gene` or `GeneFull`; STARsolo and rustar take `--soloFeatures Gene GeneFull` and
-produce both from a single alignment pass. So for the common
-exonic-plus-intronic use case HISAT2 costs ~103 s against rustar's ~52 s. This is
-a genuine parity gap, and the fix is cheap — the two interval indexes are already
-built and queried independently, so it is a matter of accumulating two feature
-streams in one run rather than re-aligning.
+**~~HISAT2 needs two passes for Gene + GeneFull.~~ Superseded — this gap is
+closed.** When this was measured, `--gene-feature` took one of `Gene` or
+`GeneFull`, so the common exonic-plus-intronic use case cost ~103 s against
+rustar's ~52 s. It now accepts a comma-separated list and counts both features
+from a single alignment pass, as STARsolo and rustar do with
+`--soloFeatures Gene GeneFull`: per-feature state lives in its own arena and
+only the interval query repeats, so the alignment, CIGAR and reference-block
+work is shared.
+
+**The ~103 s figure should not be quoted.** It was never re-measured on this
+dataset — the mouse FASTQs and index are gone — so there is no both-feature
+number for this table. What is measured is a 111,600-read fixture where one pass
+beat two separate runs by **1.90x**, near the 2x ceiling the shared-work argument
+predicts. The 51.2 s here remains a valid single-feature number, and the
+both-feature cost on this input should now be close to it rather than double it,
+but that is an inference from the 1.90x, not a measurement of this run.
+
+Correctness of the combined pass is covered in the test suite: each matrix is
+byte-identical to the one a single-feature run produces, output does not depend
+on the order features are listed, and `sum(Gene) < sum(GeneFull)` is asserted
+strictly so the identity checks cannot pass vacuously on a fixture where the two
+features coincide.
 
 **rustar's runtime is unstable on this machine, HISAT2's is not.** rustar was
 measured at 52 s, 95 s, 96 s and 313 s on identical inputs; the 313 s run showed
@@ -97,8 +119,13 @@ Worth a look if GeneFull is a target use case.
 
 ## Findings
 
-**1. HISAT2-solo cannot emit Gene and GeneFull in one pass.** See above. Costs 2x
-runtime for the nuclei/pre-mRNA use case. Fixable without re-aligning.
+**1. ~~HISAT2-solo cannot emit Gene and GeneFull in one pass.~~ Fixed.**
+`--gene-feature` now takes a comma-separated list and produces both features
+from one alignment pass; per-feature state is separate and only the interval
+query repeats. Measured at 1.90x over two separate runs on a 111,600-read
+fixture, and covered by the test suite (byte-identical to single-feature runs,
+order-independent, `sum(Gene) < sum(GeneFull)` asserted strictly). Not
+re-measured on this dataset — see the runtime section.
 
 **2. STAR is not runnable natively on this machine.** Two separate faults: the
 prebuilt index resolves its transcript info to `/geneInfo.tab` (an empty

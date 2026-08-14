@@ -84,6 +84,19 @@ unbounded above 368.8 GB rather than measured. This is a limitation of HISAT2's
 unbounded prefix-doubling construction; GCSA2 solves the same problem with
 order-bounded, external-memory construction.
 
+### Parity and throughput (`analysis/cmp`)
+
+Mouse 10x, 10M reads, same machine and input: HISAT2-solo **51.2 s / 5.18 GB**
+against rustar's 52.1–313 s / 25.6–28.2 GB and STARsolo's ~28.3 GB. rustar's
+6x runtime spread is page-cache thrash from a 25 GB index on a 51.5 GB machine;
+HISAT2 varied 0.6 s and took 78 page faults on its best run. Concordance with
+STARsolo is Jaccard 0.944 / per-gene r 0.977, against a same-family control
+ceiling of 0.983 / 0.9999.
+
+Gene and GeneFull now come from a single alignment pass (1.90x over two runs on
+a 111,600-read fixture). The three-way report predates that change and is
+annotated where superseded.
+
 ### Where the advantage does not appear
 
 Recorded because they bound the claim:
