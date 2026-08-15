@@ -47,14 +47,35 @@ from a single alignment pass, as STARsolo and rustar do with
 only the interval query repeats, so the alignment, CIGAR and reference-block
 work is shared.
 
-**The ~103 s figure should not be quoted.** It has not been re-measured on this
-dataset, so there is no both-feature number for this table. What is measured is a
-111,600-read fixture where one pass beat two separate runs by **1.90x**, near the
-2x ceiling the shared-work argument predicts. The 51.2 s here remains a valid
-single-feature number, and the both-feature cost on this input should now be
-close to it rather than double it — but that is an inference from the 1.90x, not
-a measurement of this run. The inputs are still in S3 (see the note at the top),
-so this is a gap someone chose not to close, not one that cannot be closed.
+**Measured on this dataset: 1.92x.** The ~103 s two-pass figure is retired. Same
+10M reads, same annotation and whitelist, rebuilt index, 16 threads:
+
+| config | 3 runs (s) | median |
+|---|---|---|
+| Gene | 47.4 / 46.8 / 46.5 | 46.8 |
+| GeneFull | 46.7 / 46.8 / 46.8 | 46.8 |
+| Gene,GeneFull | 49.2 / 48.8 / 48.6 | 48.8 |
+
+Two passes 93.6 s, one pass 48.8 s, **1.92x**. The second feature costs **+2.0 s,
+4.3% over Gene alone** — an interval query and a second record arena, not another
+alignment.
+
+**These absolute seconds are not comparable to the 51.2 s above.** They were taken
+while another workload held the machine at load 13-20; the original was measured
+on a quiet one. The ratio is what survives contention, and three checks say it
+did: the runs were rotated Gene -> GeneFull -> Gene,GeneFull so each config
+sampled the same conditions, per-rotation speedups were 1.91 / 1.92 / 1.92 while
+load climbed from 13.5 to 19.7, and the median and minimum agree exactly. Gene
+and GeneFull do near-identical work and came out at 46.8 s each, which is the
+built-in check that the sampling was sound.
+
+An earlier attempt with the wrong barcode whitelist put the overhead at 0.2%.
+That run had 3.9% valid barcodes, so 96% of reads never reached the counter and
+the second feature had nothing to do. With the correct 5' GEM-X whitelist and
+3.9M UMIs actually counted, the cost is 4.3%. Correctness at that scale held:
+Gene 3,907,687 UMIs < GeneFull 4,624,940, and both combined-pass matrices were
+byte-identical to their single-feature runs. Alignment rate 87.40% and index size
+3.8 GB both reproduce the original run exactly.
 
 Correctness of the combined pass is covered in the test suite: each matrix is
 byte-identical to the one a single-feature run produces, output does not depend

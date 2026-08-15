@@ -93,11 +93,12 @@ HISAT2 varied 0.6 s and took 78 page faults on its best run. Concordance with
 STARsolo is Jaccard 0.944 / per-gene r 0.977, against a same-family control
 ceiling of 0.983 / 0.9999.
 
-Gene and GeneFull now come from a single alignment pass (1.90x over two runs on
-a 111,600-read fixture). The three-way report predates that change and is
-annotated where superseded. Its inputs are in `s3://rustar-bench/` — FASTQs,
-gene model, GTF, whitelist, STAR and rustar indexes — so it can be re-run after
-rebuilding the mouse HISAT2 index from a public GRCm39 FASTA.
+Gene and GeneFull now come from a single alignment pass: **1.92x** over two
+separate runs on the same 10M mouse reads (93.6 s -> 48.8 s), the second feature
+costing 4.3%. The three-way report predates that change and is annotated where
+superseded. Its inputs are in `s3://rustar-bench/` — FASTQs, gene model, GTF,
+whitelist, STAR and rustar indexes — so it can be re-run after rebuilding the
+mouse HISAT2 index from a public GRCm39 FASTA.
 
 ### Where the advantage does not appear
 
