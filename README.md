@@ -100,6 +100,31 @@ superseded. Its inputs are in `s3://rustar-bench/` — FASTQs, gene model, GTF,
 whitelist, STAR and rustar indexes — so it can be re-run after rebuilding the
 mouse HISAT2 index from a public GRCm39 FASTA.
 
+### Variant loss concentrates in the MHC (`analysis/probe`)
+
+`hisat2_index_probe.py` (in the hisat2 repo) predicts both of hisat2-build's
+failure modes from the `.snp`/`.haplotype` files in seconds. On the whole-genome
+phased set it returns **WILL FAIL at 72.5% of the 2^32 ceiling** — the outcome
+stage 2b took four builds and ~$24 to establish.
+
+It also shows where the dropped variants would be:
+
+| | over-budget windows | variants at risk |
+|---|---|---|
+| genome-wide | 19.1% | 28.9% |
+| extended MHC | 55.1% | **83.9%** |
+
+The MHC carries 2.4x the genome-wide variant density, 27 of the 100 densest
+over-budget windows sit in it (0.18% of windows), and **every HLA gene measured
+in the T1 work is in an over-budget window** — the densest window in the genome
+covers HLA-DQA1, the gene with the 32x gain.
+
+The constraint and the payoff share an address. But over-budget status does not
+predict benefit — those same genes range 1.00x to 32.1x — and the dose-response
+above says retention barely moves alignment anyway. The defensible reading is
+that the T1 numbers were obtained with a partial variant set in those windows,
+making them a floor rather than a ceiling.
+
 ### Where the advantage does not appear
 
 Recorded because they bound the claim:
@@ -125,6 +150,7 @@ analysis/filt        pseudogene variant filter and its falsification
 analysis/cmp         three-way comparison, HISAT2 / STAR / rustar
 analysis/hap         variant-retention A/B: halving vs binary search
 analysis/bias        reference-bias dose-response across retention levels
+analysis/probe       build-outcome prediction; where variant loss lands
 analysis/aws         cloud build stages and reports (chr1 probe, whole-genome attempts)
 upstream/            the two upstream issue writeups
 ```

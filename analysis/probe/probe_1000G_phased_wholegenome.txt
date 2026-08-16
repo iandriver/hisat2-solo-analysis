@@ -1,0 +1,35 @@
+reference          3,099,750,718 bp in 71 sequences, 55072 local windows
+variants           14,947,745  (single 12,643,877, insertion 1,219,323, deletion 1,084,545)
+haplotypes         16,338,502 rows, 1.09 per variant
+density            1 per 207 bp
+
+--- global node bound (32-bit) ---
+  reference alone      3,099,750,718 nodes  (72.2% of the ceiling)
+  plus variants        3,115,407,639 nodes  (72.5% of the ceiling)
+  headroom for growth  27.5%
+  verdict              WILL FAIL -- GRCh38 failed twice at this fraction (72%)
+
+--- local edge budget (calibrated) ---
+  haplotypes per variant       1.09
+  effective capacity           384 variants per 57344 bp window
+  windows with variants        48,705
+  windows over the budget      9,309 (19.1% of populated)
+  variant edges in those       4,317,511 (27.6% of all)
+  estimated retention          87.6%
+
+  densest windows:
+    chr6:32609280-32666624  3,145 variants (8.2x capacity)
+    chr6:32665600-32722944  2,777 variants (7.2x capacity)
+    chr6:32552960-32610304  2,717 variants (7.1x capacity)
+    chr6:31313920-31371264  2,576 variants (6.7x capacity)
+    chr6:29905920-29963264  2,314 variants (6.0x capacity)
+    chr6:31257600-31314944  2,192 variants (5.7x capacity)
+    chr6:32496640-32553984  1,948 variants (5.1x capacity)
+    chr6:29793280-29850624  1,946 variants (5.1x capacity)
+    chr6:29849600-29906944  1,923 variants (5.0x capacity)
+    chr6:29962240-30019584  1,922 variants (5.0x capacity)
+
+Suggestion: --large-index raises the node ceiling, at the cost of a
+  larger index and a much larger build. Reducing haplotype count helps
+  more than reducing variant count: haplotype rows are what multiply
+  during path-graph construction.

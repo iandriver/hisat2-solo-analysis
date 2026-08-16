@@ -1,0 +1,14 @@
+genome-wide    48705 windows    14947745 variants   9309 over (19.1%)  28.9% at risk
+extended MHC      89 windows       66177 variants     49 over (55.1%)  83.9% at risk
+
+MHC density is 2.4x the genome-wide average
+
+gene        windows  variants  over budget   T1 gain
+HLA-DQA1          1      3145          1/1    32.10x
+HLA-DQB1          2      5922          2/2     3.00x
+HLA-DRB1          1      2717          1/1     1.54x
+HLA-C             1      2192          1/1     1.51x
+HLA-A             1      2314          1/1     1.00x
+HLA-B             1      2576          1/1     1.00x
+
+27 of the 100 densest over-budget windows are in the MHC, which is 0.18% of all windows
