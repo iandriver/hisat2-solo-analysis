@@ -155,6 +155,36 @@ under macOS Spotlight load, while peak RSS moved less than 4%. STARsolo itself
 could not be run — the Homebrew ARM64 build fails nondeterministically resolving
 `geneInfo.tab`, and one run mapped 0 reads while printing `ALL DONE!`.
 
+### HLA recovery replicates on two more donors; ancestry scaling does not resolve (`analysis/bench`)
+
+GM12878 (CEU) and GM18502 (YRI), 50M reads each, graph vs linear index, all four
+alignment rates reproducing T4b exactly.
+
+Normalised by each donor's transcriptome-wide graph/linear ratio (0.931 / 0.924
+— the graph *loses* ~7% of unique reads overall, so 1.00 is the wrong baseline):
+
+| gene | CEU | YRI |
+|---|---|---|
+| HLA-DRB1 | 1.78 | **2.60** |
+| HLA-C | 1.71 | 1.92 |
+| HLA-DQB1 | 1.91 | 1.86 |
+| HLA-DRA / DMA / DMB (invariant) | 1.07 | 1.07-1.08 |
+
+**Established:** the T1 HLA result replicates on two further donors — mean 1.31x
+(CEU) and 1.39x across 13 HLA genes, against invariant chains flat at 1.07.
+
+**Not established:** that the benefit tracks ancestry. YRI gains more in 10 of
+13 genes, but the sign test gives **p = 0.092**, and dropping HLA-DRB1 alone
+collapses the mean difference from +0.085 to +0.024. HLA-DQA2 gains 8.7x in CEU
+and *loses* in YRI. Which genes benefit still looks like a property of the
+individual's haplotypes rather than their population label — as T1 suspected.
+Settling it needs a cohort, not a pair.
+
+Third appearance of one mechanism: RPL13A (0.37/0.39) and EEF1A1 (0.57/0.49)
+lose reads under the graph index, because processed pseudogenes turn them into
+multimappers. Same cause as H1's OLFM3/RPSAP19 and the mouse comparison's
+ribosomal-protein disagreements.
+
 ### Where the advantage does not appear
 
 Recorded because they bound the claim:
@@ -180,7 +210,8 @@ analysis/filt        pseudogene variant filter and its falsification
 analysis/cmp         three-way comparison, HISAT2 / STAR / rustar
 analysis/hap         variant-retention A/B: halving vs binary search
 analysis/bias        reference-bias dose-response across retention levels
-analysis/bench       human 10x benchmark: footprint vs STAR, concordance vs CellRanger
+analysis/bench       human benchmarks: footprint vs STAR, concordance vs CellRanger,
+                     HLA recovery across two ancestries (H1, H2)
 analysis/probe       build-outcome prediction; where variant loss lands
 analysis/aws         cloud build stages and reports (chr1 probe, whole-genome attempts)
 upstream/            the two upstream issue writeups

@@ -1,0 +1,80 @@
+========================================================================
+H2 -- variant-aware recovery by donor ancestry
+========================================================================
+
+--- alignment rate (all reads) ---
+donor      population          graph   linear    delta
+GM12878    CEU / European     88.30%   88.37%   -0.07
+GM18502    YRI / Yoruba       87.76%   87.87%   -0.11
+
+--- uniquely-assigned reads in genes (the normalising baseline) ---
+donor               graph         linear    ratio
+GM12878        30,991,258     33,297,327  0.9307
+GM18502        30,890,657     33,429,802  0.9240
+
+--- paralog-prone genes, rejected as controls ---
+donor      gene            graph     linear    ratio
+GM12878    RPL13A         122686     330479    0.371
+GM12878    EEF1A1          29400      51877    0.567
+GM18502    RPL13A         151535     387079    0.391
+GM18502    EEF1A1          27805      56279    0.494
+
+--- controls (must be ~1.00 for the HLA numbers to mean anything) ---
+donor      gene            graph     linear    ratio
+GM12878    B2M            282227     283679    0.995
+GM12878    ACTB           136341     136646    0.998
+GM12878    GAPDH            9781      10135    0.965
+GM12878    TMSB4X         757508     780237    0.971
+GM18502    B2M            191863     195569    0.981
+GM18502    ACTB           167115     166890    1.001
+GM18502    GAPDH           31024      31296    0.991
+GM18502    TMSB4X         883674     910075    0.971
+
+  GM12878 control mean ratio 0.9821 (n=4)
+  GM18502 control mean ratio 0.9862 (n=4)
+
+--- HLA, graph vs linear, per donor ---
+gene          CEU grf    CEU lin    ratio |    YRI grf    YRI lin    ratio
+HLA-A           23528      23653    0.995 |      28077      26260    1.069
+HLA-B           47624      45083    1.056 |      35288      33340    1.058
+HLA-C           30199      19018    1.588 |      24907      14054    1.772
+HLA-E           13249      13433    0.986 |      12028      11981    1.004
+HLA-F            2184       2333    0.936 |       2050       2038    1.006
+HLA-G               4          4    1.000 |          0          0      nan
+HLA-DRA         53806      53813    1.000 |      71436      72278    0.988
+HLA-DRB1        14213       8571    1.658 |       7234       3010    2.403
+HLA-DRB5          324         38    8.526 |        425         50    8.500
+HLA-DQA1         6171       4262    1.448 |      13963      11273    1.239
+HLA-DQA2           87         10    8.700 |        543        796    0.682
+HLA-DQB1         5337       3004    1.777 |      10044       5833    1.722
+HLA-DQB2           31         21    1.476 |         99         60    1.650
+HLA-DPA1        17085      15727    1.086 |      18582      17202    1.080
+HLA-DPB1        15172      11830    1.283 |      26144      18945    1.380
+HLA-DMA          7831       7847    0.998 |      10207      10217    0.999
+HLA-DMB          3818       3818    1.000 |       5249       5253    0.999
+
+--- the comparison H2 exists to make ---
+  HLA genes compared (>=100 linear reads in both): 13
+  mean graph/linear ratio   CEU 1.2162   YRI 1.2862
+  housekeeping-normalised   CEU 1.2383   YRI 1.3042
+  transcriptome-normalised  CEU 1.3067   YRI 1.3919
+  HLA genes where YRI gains more than CEU: 10 / 13
+
+  per-gene, both normalisers applied:
+  gene         CEU norm   YRI norm
+  HLA-DRB1        1.782      2.601
+  HLA-C           1.706      1.918
+  HLA-DQB1        1.909      1.863
+  HLA-DPB1        1.378      1.493
+  HLA-DQA1        1.556      1.340
+  HLA-DPA1        1.167      1.169
+  HLA-A           1.069      1.157
+  HLA-B           1.135      1.145
+  HLA-F           1.006      1.089
+  HLA-E           1.060      1.086
+  HLA-DMB         1.074      1.081
+  HLA-DMA         1.072      1.081
+  HLA-DRA         1.074      1.070
+
+  -> YRI gains more, consistent with recovery scaling with
+     distance from a largely European-derived reference.
