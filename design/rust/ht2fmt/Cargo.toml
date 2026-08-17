@@ -1,0 +1,12 @@
+[package]
+name = "ht2fmt"
+version = "0.1.0"
+edition = "2021"
+
+# S1 of the builder plan: prove format mastery before writing any construction
+# code. Read a .ht2 header, re-emit it, and require the bytes to match.
+# No dependencies -- the point is to own the byte layout, not to wrap a library.
+
+[[bin]]
+name = "ht2fmt"
+path = "src/main.rs"
