@@ -156,54 +156,33 @@ fn suffix_array(t: &[u8]) -> Vec<u32> {
 /// side r/sideGbwtLen, character offset r%sideGbwtLen.
 fn compare_bwt(buf: &[u8], gbwt_off: usize, side_sz: usize, side_gbwt_len: usize,
                sa: &[u32], t: &[u8], z_ours: u64) {
-    let at = |r: usize, hi_first: bool| -> u8 {
+    // Unpacking is verified separately against the per-side occ tallies, so the
+    // only open question is how our SA rows line up with the stored rows.
+    // Report every shift over the FULL range, with no threshold gate -- an
+    // earlier version gated on a 20,000-row prefix and drew the wrong
+    // conclusion from it.
+    let at = |r: usize| -> u8 {
         let side = r / side_gbwt_len;
         let off = r % side_gbwt_len;
         let byte = buf[gbwt_off + side * side_sz + (off >> 2)];
-        let bp = off & 3;
-        if hi_first { (byte >> (2 * (3 - bp))) & 3 } else { (byte >> (2 * bp)) & 3 }
+        (byte >> (2 * (off & 3))) & 3
     };
-    let m = sa.len(); // n + 1 rows, sentinel first
-    for &hi_first in &[true, false] {
-        // try a few row offsets: our sentinel-first numbering may be shifted
-        for shift in -2i64..=2 {
-            let mut agree = 0usize;
-            let mut total = 0usize;
-            for row in 1..m.min(20000) {
-                let r2 = row as i64 + shift;
-                if r2 < 0 || r2 as usize >= m { continue; }
-                let p = sa[row] as usize;
-                if p == 0 { continue; } // sentinel row, character is a placeholder
-                total += 1;
-                if t[p - 1] == at(r2 as usize, hi_first) { agree += 1; }
-            }
-            if total > 0 && agree * 100 / total >= 90 {
-                println!("  BWT match: hi_first={hi_first} shift={shift} -> {}/{} ({}%)",
-                         agree, total, agree * 100 / total);
-                // full-length pass, and name the rows that disagree
-                let mut bad: Vec<(usize, usize, u8, u8)> = Vec::new();
-                let mut tot2 = 0usize; let mut nbad = 0usize;
-                for row in 1..m {
-                    let r2 = row as i64 + shift;
-                    if r2 < 0 || r2 as usize >= m { continue; }
-                    let p = sa[row] as usize;
-                    if p == 0 { continue; }
-                    tot2 += 1;
-                    let got = at(r2 as usize, hi_first);
-                    if t[p - 1] != got { nbad += 1; if bad.len() < 6 {
-                        bad.push((row, p, t[p - 1], got)); }
-                    }
-                }
-                println!("    full pass: {} rows, {} disagreements ({:.4}%)", tot2, nbad, 100.0 * nbad as f64 / tot2 as f64);
-                for (row, p, mine, theirs) in &bad {
-                    println!("      row {:>9}  SA={:>9}  ours={} theirs={}{}",
-                             row, p, mine, theirs,
-                             if *p == 509431 { "   <- fragment 1 start" } else { "" });
-                }
-            }
+    let m = sa.len();
+    println!("  full-range agreement by row shift (low-bits-first packing):");
+    for shift in -3i64..=3 {
+        let mut agree = 0usize; let mut total = 0usize;
+        for row in 0..m {
+            let r2 = row as i64 + shift;
+            if r2 < 0 || r2 as usize >= m { continue; }
+            let p = sa[row] as usize;
+            if p == 0 { continue; }
+            total += 1;
+            if t[p - 1] == at(r2 as usize) { agree += 1; }
         }
+        println!("    shift {shift:>2}: {}/{} = {:.4}%", agree, total,
+                 100.0 * agree as f64 / total as f64);
     }
-    println!("  (our sentinel-first row for suffix 0 = {z_ours})");
+    println!("  (our sentinel-first row for suffix 0 = {z_ours}, stored zOffs differs)");
 }
 
 fn main() {
@@ -292,8 +271,54 @@ fn main() {
 
     println!("\nBWT cross-check against the stored index:");
     let gbwt_off = 44 + 4 + n_pat as usize * 4 + 4 + n_frag as usize * 12;
+    println!(" [forward text]");
     compare_bwt(&buf, gbwt_off, side_sz as usize,
                 (side_gbwt_sz << 2) as usize, &sa, &r.text, z);
+    // The aligner reads queries from the end, which is consistent with the BWT
+    // being built over the reversed text. Test that directly.
+    let mut rev = r.text.clone();
+    rev.reverse();
+    let sar = suffix_array(&rev);
+    let zr = sar.iter().position(|&x| x == 0).unwrap() as u64;
+    println!(" [reversed text]  (its sentinel-first row for suffix 0 = {zr})");
+    compare_bwt(&buf, gbwt_off, side_sz as usize,
+                (side_gbwt_sz << 2) as usize, &sar, &rev, zr);
+
+    // .2.ht2 stores HISAT2's own SA values, one per 2^offRate rows. That is
+    // direct ground truth for their suffix array, so compare ours against it.
+    if let Ok(sabuf) = std::fs::read(ref_idx.replace(".1.ht2", ".2.ht2")) {
+        let off_rate = u(8 + 5 * 4) as u32;
+        let step = 1usize << off_rate;
+        let n = (sabuf.len() - 4) / 4;
+        println!("\n.2.ht2 SA sample: {} entries, one per {} rows", n, step);
+        for shift in 0..3usize {
+            let mut agree = 0usize; let mut total = 0usize;
+            for k in 0..n {
+                let idx = k * step + shift;
+                if idx >= sa.len() { break; }
+                let theirs = u32::from_le_bytes(sabuf[4 + k*4..8 + k*4].try_into().unwrap()) as u64;
+                total += 1;
+                if sa[idx] as u64 == theirs { agree += 1; }
+            }
+            println!("    their row k  vs  our row k+{shift}: {}/{} = {:.4}%",
+                     agree, total, 100.0 * agree as f64 / total as f64);
+        }
+        // locate the transition from offset +1 to offset +2
+        let get = |k: usize| u32::from_le_bytes(sabuf[4+k*4..8+k*4].try_into().unwrap()) as u64;
+        let mut last1 = 0usize; let mut first2 = 0usize;
+        for k in 0..n { if k*step+1 < sa.len() && sa[k*step+1] as u64 == get(k) { last1 = k; } else { break; } }
+        for k in (0..n).rev() { if k*step+2 < sa.len() && sa[k*step+2] as u64 == get(k) { first2 = k; } else { break; } }
+        println!("    offset +1 holds up to their row {} (index {})", last1*step, last1);
+        println!("    offset +2 holds from their row {} (index {})", first2*step, first2);
+        println!("    so our extra element sits between our rows {} and {}",
+                 last1*step+1, first2*step+2);
+        for k in [last1, last1+1] {
+            if k < n { println!("      their row {:>9} = {:>9}", k*step, get(k)); }
+        }
+        for i in [last1*step+1, last1*step+2, last1*step+3] {
+            if i < sa.len() { println!("      our   row {:>9} = {:>9}", i, sa[i]); }
+        }
+    }
 
     println!();
     if ok {

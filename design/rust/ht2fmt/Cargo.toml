@@ -19,3 +19,7 @@ path = "src/bin/ht2build.rs"
 
 [profile.release]
 debug = true
+
+[[bin]]
+name = "ht2invert"
+path = "src/bin/ht2invert.rs"
