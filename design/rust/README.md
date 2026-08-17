@@ -50,6 +50,51 @@ Anyone rebuilding a human graph index from real phased data is therefore not
 doing a slightly harder version of what JHU did; they are doing something the
 32-bit format cannot represent.
 
+## S2 — construction (rung 2): **front end passing, BWT layout not yet solved**
+
+`ht2build` builds the front end from a FASTA and checks each piece against a
+reference index produced by `hisat2-build` on `example/reference/22_20-21M.fa`
+(1,000,000 bp containing a 100,000 bp N run, so `len` = 900,000 while
+`plen[0]` = 1,000,000).
+
+**Verified exact:**
+
+| quantity | status |
+|---|---|
+| `len`, `nPat`, `plen[0]`, `nFrag` | match |
+| `rstarts[]` — both fragments, all three fields | match |
+| `fchr[5]` (A/C/G/T cumulative histogram) | match |
+| suffix array | independently brute-force verified |
+
+The suffix array was checked against a direct count of suffixes lexicographically
+smaller than the whole string (815,267), which agrees with the constructed SA.
+The indexed text was also confirmed byte-identical to what `hisat2-inspect`
+reconstructs from the index, so the input to the BWT is not in question.
+
+**Not yet solved:**
+
+- `zOffs` — we compute 815,268 under sentinel-first numbering, 815,267 under
+  sentinel-last. The stored value is **815,266**. `gfm.h:2722`
+  (`if(elt == _zOffs[i]) return 0;`) confirms `zOffs` is the row whose text
+  offset is 0, which is what we compute, so the gap is not a definitional one.
+- **The row-to-BWT mapping.** Unpacking the stored `gbwt` with the layout from
+  `GFM::postReadInit` (`gfm.h:2783`) — 4 characters per byte, low bits first,
+  in the first `sideGbwtSz` bytes of each `sideSz` side — matches our BWT for
+  the first ~20,000 rows but **disagrees on 20.5% of all 899,999 rows**.
+
+  The disagreements are not at the fragment boundary and are not a constant
+  offset; they appear as short runs of consecutive rows whose values look
+  permuted. That pattern suggests the row mapping drifts rather than being
+  uniformly shifted.
+
+  **Recorded as a caution:** an earlier pass sampled only the first 20,000 rows,
+  found 99.99% agreement, and concluded the layout was solved. It was not. The
+  full-range check is the one that counts.
+
+Since the SA, the text and the character histogram are all independently
+confirmed, the remaining discrepancy is in how rows are laid out in the packed
+sides, not in the index content. That is the next thing to work out.
+
 ## Next rungs
 
 2. `22_20-21M.fa`, no variants — full index byte-identical to `hisat2-build`.

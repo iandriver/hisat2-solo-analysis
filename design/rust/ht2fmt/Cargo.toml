@@ -3,10 +3,19 @@ name = "ht2fmt"
 version = "0.1.0"
 edition = "2021"
 
-# S1 of the builder plan: prove format mastery before writing any construction
-# code. Read a .ht2 header, re-emit it, and require the bytes to match.
-# No dependencies -- the point is to own the byte layout, not to wrap a library.
+# Builder prototype for the HISAT2 .ht2 format.
+#   ht2fmt   - rung 1: parse an existing index, account for every byte
+#   ht2build - rung 2: construct an index and match hisat2-build byte for byte
+# No dependencies: the format must be emitted exactly, so the byte layout is
+# the thing being owned, not delegated.
 
 [[bin]]
 name = "ht2fmt"
 path = "src/main.rs"
+
+[[bin]]
+name = "ht2build"
+path = "src/bin/ht2build.rs"
+
+[profile.release]
+debug = true
