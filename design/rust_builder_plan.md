@@ -143,15 +143,44 @@ exact match, so query length is bounded by read length, not by a seed constant.
 
 So before adopting B2:
 
-**Experiment 1 — instrument `mapLF` depth against the global index and record
-the distribution of query lengths actually issued.** If the 99.99th percentile is
-comfortably under k, an order-k index is *exactly* equivalent for real queries
-and B2 is free. If MEMs routinely run to 150 bp, k must be >= 256 or a
-verification step is needed, and B2 stops being free.
+**Experiment 1 — DONE, and it reorders this whole plan. See
+`query_lengths.md`.**
 
-This experiment is cheap (one instrumented build, one run of 1M reads) and it is
-the difference between B2 being an optimisation and B2 being a correctness
-change.
+The longest query ever issued against the global index was **131 bp** (150 bp
+reads; 86 bp on 91 bp reads), mean 24, median 18. A maximal exact match cannot
+exceed its read, so the distribution is structurally bounded.
+
+Against the E0 construction curve, where `generation` means "sorted by paths of
+length 2^generation" and construction runs to *full* disambiguation:
+
+| generation | order | nodes | % of 2^32 |
+|---|---|---|---|
+| 8 | 256 | 3,390,374,563 | **78.9% — fits** |
+| 9 | 512 | 3,595,956,954 | **83.7% — fits** |
+| 10 | 1024 | overflow | — |
+
+**Stopping the doubling at generation 8 or 9 puts a whole human graph index
+inside the 32-bit ceiling and is exactly equivalent for every query HISAT2
+issues.** Order 256 clears the observed maximum by 2x. For contrast, chr22 needs
+order 8192 to fully sort — the index is built to roughly two orders of magnitude
+more resolution than anything ever asks for.
+
+So B2 is not a fallback. It is the primary lever, and B1 demotes to an
+optimisation:
+
+1. **Bound the order** — human whole-genome graph index becomes buildable at
+   32 bits in ~176 GB, no new integer width, no external memory, no id format
+   change.
+2. **External memory** — now about build-machine cost, not about whether the
+   index can exist.
+3. **64-bit** — unnecessary for human; still needed for pangenomes.
+
+The unpaid cost: `generateEdges` and the GFM build run *after*
+`while(!isSorted())` and assume a fully sorted `PathGraph`. Stopping early leaves
+nodes sharing a 2^g prefix merged, and the rest of the pipeline must handle it —
+which is precisely what GCSA2 implements, so known-possible, but real work. A
+naive `break` out of the doubling loop would produce a wrong index, not a
+bounded one.
 
 ### Phase C — local indexes, and the MHC problem
 
