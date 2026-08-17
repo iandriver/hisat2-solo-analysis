@@ -3,28 +3,37 @@
 Staged against the validation ladder in `../rust_builder_plan.md`. Each rung must
 pass before the next is attempted.
 
-## S1 — format round-trip (rung 1): **passing**
+## S1 — format layout (rung 1): **passing**
 
-`ht2fmt` reads a `.ht2` header and re-emits it byte-identically. No construction
-code; the only claim under test is that the on-disk layout is understood well
-enough to reproduce it. Field order is taken from `GFM::readIntoMemory`
-(`gfm.h:5905`), the authoritative reader.
+`ht2fmt` parses a `.1.ht2` in full and accounts for every byte. No construction
+code; the claim under test is only that the on-disk layout is understood
+exactly, which is the prerequisite for emitting anything.
+
+**The test has teeth because every section size is derived, not stored.** The
+bulk `gbwt` block, `ftab`, `offsLen` and the side geometry all come from
+`GFMParams::init` (`gfm.h:138`). Reproduce any formula wrongly and the sections
+will not sum to the file length.
 
 ```
 cargo run --release -- /path/to/genome_snp.1.ht2
 ```
 
-On the distributed `grch38_snp`:
+Verified against three real indexes spanning both modes and three orders of
+magnitude:
 
-```
-  index version      2.0.2-beta      <- hisat2-inspect -s agrees
-  ftabChars          10              <- agrees
-  offRate            4               <- agrees (SA-Sample 1 in 16)
-  len                2,945,849,067
-  gbwtLen            3,315,031,465
-  numNodes           3,300,850,145
-  ROUND-TRIP OK: 44 header bytes reproduced exactly
-```
+| index | mode | file bytes | sections sum |
+|---|---|---|---|
+| `22_20-21M_snp` | graph FM | 4,789,374 | exact |
+| `grch38_snp` | graph FM | 2,044,241,775 | exact |
+| `grch38` | linear FM | 986,172,031 | exact |
+
+Both branches of `GFMParams::init` are exercised: graph indexes reserve 6
+`index_t` per side and pack 2 nucleotides per byte, linear ones reserve 4 and
+pack 4. The mode is inferred from `len + 1 == gbwtLen`, not stored.
+
+Header fields also cross-check against an independent tool — `hisat2-inspect -s`
+agrees on index version (2.0.2-beta), `ftabChars` (10) and `offRate` (4, shown
+there as "SA-Sample 1 in 16").
 
 ### An observation that closes a loop
 
