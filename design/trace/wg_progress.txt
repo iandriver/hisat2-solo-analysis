@@ -1,0 +1,19 @@
+starting
+[15:40:39] DEPS_READY 48 cpus, 371 GB RAM
+[15:40:55] HISAT2_READY
+[15:42:41] GENOME bp=3099750718 contigs=194
+[15:42:50] VARIANTS snp=14947745 haplotype=16338502
+[15:43:01] SMOKE_INPUT snp=3449 hap=4348
+[15:43:04] SMOKE rc=0 generations=13
+[15:43:04] BUILD_START np=48
+[15:44:05] WARN no Generation lines yet
+[15:45:07] WARN no Generation lines yet
+[15:46:08] WARN no Generation lines yet
+[15:47:10] WARN no Generation lines yet
+[15:48:11] WARN no Generation lines yet
+[15:49:12] WARN no Generation lines yet
+[15:50:14] WARN no Generation lines yet
+[16:02:05] BUILD_DONE rc=1 generations=10
+[16:02:05] OVERFLOWED (the expected result)
+	Maximum resident set size (kbytes): 184548364
+[16:02:08] ALL_DONE

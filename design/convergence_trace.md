@@ -79,20 +79,68 @@ Discriminating between these needs more memory than this machine has: chr2 alone
 peaked at 19.65 GB, and a whole-genome 32-bit build needs ~144 GB for the node
 arrays alone.
 
+## The whole-genome curve — measured, and it resolves the contradiction
+
+Run on AWS (r7i.12xlarge, 48 cpu / 371 GB, ~$1.20 of instance time), 32-bit,
+GRCh38 primary assembly + the full 14,947,745-variant phased set, exactly the
+stage-2b configuration.
+
+| gen | temp nodes | nodes | % of 2^32 | ranks/nodes |
+|---|---|---|---|---|
+| 0 | 3,051,980,501 | 3,051,980,501 | 71.1% | — |
+| 3 | 3,166,890,352 | 3,166,890,352 | 73.7% | — |
+| 5 | 3,498,007,929 | 3,315,396,267 | 81.4% | 0.848 |
+| 8 | 3,436,077,182 | 3,390,374,563 | 80.0% | 0.980 |
+| 9 | 3,635,922,500 | 3,595,956,954 | 84.7% | 0.962 |
+| **10** | **> 4,294,967,295** | — | **overflow** | — |
+
+**The extrapolation above was wrong, and the error is quantified.** Whole-genome
+growth is **1.453 nodes/bp against 1.0927 per-chromosome — 33% higher**.
+Superlinear growth in collection size is confirmed; the three-chromosome test
+(+0.84%) sampled far too little of the genome's repeat structure to see it.
+
+Projecting chr22's generation-10 jump (1.2524x) onto the measured generation-9
+count gives a final of **~4.50e9 nodes, ~105% of the 2^32 ceiling**. The 32-bit
+build misses by roughly 5%.
+
+### What this settles
+
+- **`index_t` must be 64-bit.** Measured, not assumed, and the margin is small
+  enough that measuring was worth it.
+- **No variant filtering rescues the 32-bit build.** Variants and haplotypes
+  contribute only ~3.3% of the initial node count; the reference dominates. That
+  is why stage 2b failed identically at 14.95M and at 12.64M variants.
+- **The 64-bit requirement is now sized.** At ~4.5e9 nodes, 32 B per `PathNode`,
+  three live arrays in `lateGeneration`: **~400 GB for `PathGraph` alone**. That
+  is a precise explanation of the observed 368.8 GB OOM — it died inside that
+  allocation. With GFM and local-index construction on top, an in-memory 64-bit
+  build wants 500-700 GB.
+- **The property the external-memory design depends on holds at full scale**:
+  within-generation temp/nodes stayed between 1.01 and 1.06. No spike to absorb.
+
+Measured 32-bit peak RSS before the overflow: **176 GB** (184,548,364 KB).
+
+### Method note
+
+Three launches were needed. The first invoked `hisat2-build-s` (the binary) with
+`--verbose`, which only the Python wrapper accepts; the second failed because
+the output directory did not exist. Both died in seconds and self-terminated, so
+the waste was ~$0.40. The third added a pre-flight that builds a 1.2 Mb chr1
+slice with real variants and requires >=3 `Generation` lines before committing to
+the long run — a gate that would have caught both.
+
+Worth recording separately: `--verbose` is a *wrapper* option and is not passed
+to the binary at all. The binary is verbose by default (`-q` disables it), which
+is why the local traces produced curves despite the wrapper stripping the flag.
+
 ## Consequence for the plan
 
-**E0 on a large-memory machine is now more valuable, not less.** Its purpose has
-changed: not "does doubling converge" (answered here — it does, cleanly) but
-"where does the overflow actually occur". Building the external-memory sort-merge
-join around an assumption about which structure blows up would be building
-around a guess.
-
-The cheap version of that question, worth trying first: run `hisat2-build` with
-`--no-repeat-index` on the whole genome at 32-bit and see whether it still
-overflows. If it completes, hypothesis 1 is confirmed for free and the repeat
-index becomes the target. That still needs ~144 GB, so it is a one-instance
-experiment rather than a laptop one — but it is a single decisive run rather than
-an exploratory rental.
+**Answered.** The overflow is in the main graph, at generation 10, needing
+~4.5e9 path nodes against a 4.295e9 ceiling. Hypothesis 1 (the repeat index) was
+wrong at the premise: `hisat2-build` does not build a repeat index at all unless
+one is supplied via `--repeat-ref`, and stage 2b supplied none. Hypothesis 2,
+superlinear growth with collection size, is confirmed and measured at +33%
+nodes/bp over the per-chromosome figure.
 
 ## Peak RSS observed (32-bit, `-p 8`, includes GFM and local index construction)
 

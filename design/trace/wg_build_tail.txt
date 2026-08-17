@@ -1,0 +1,60 @@
+8 74961941
+8 74989038
+8 75327705
+7 139590447
+8 74893226
+7 66059513
+8 74891279
+7 96199712
+7 67025803
+7 65616579
+7 65809379
+7 66032253
+7 65883106
+7 68123304
+7 65730196
+6 60580831
+6 58448467
+7 58720256
+7 58720256
+6 49297912
+FINISHED RECURSIVE SORTS: 9
+BUILD TABLE: 10
+BUILD INDEX: 9
+COUNTED NEW NODES: 0
+exceeded integer bounds, remove adjacent SNPs, use haplotypes, or switch to a large index (--large-index)
+Total time for call to driver() for forward index: 00:19:00
+Error: Encountered internal HISAT2 exception (#1)
+Command: hisat2-build --wrapper basic-0 -p 48 --snp /mnt/work/genome.snp --haplotype /mnt/work/genome.haplotype /mnt/work/genome.fa /mnt/work/idx/genome 
+Deleting "/mnt/work/idx/genome.1.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.2.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.3.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.4.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.5.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.6.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.7.ht2" file written during aborted indexing attempt.
+Deleting "/mnt/work/idx/genome.8.ht2" file written during aborted indexing attempt.
+Command exited with non-zero status 1
+	Command being timed: "/mnt/work/hisat2/hisat2-build -p 48 --verbose --snp /mnt/work/genome.snp --haplotype /mnt/work/genome.haplotype /mnt/work/genome.fa /mnt/work/idx/genome"
+	User time (seconds): 5647.89
+	System time (seconds): 740.91
+	Percent of CPU this job got: 560%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 18:59.71
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 184548364
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 243856616
+	Voluntary context switches: 18385429
+	Involuntary context switches: 44964
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 169563752
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1
