@@ -31,7 +31,40 @@ it belongs in a later stage, behind evidence.
 | 2 | 64-bit build exhausts RAM | `PathGraph` holds `nodes` + `past_nodes` | OOM at 368.8 GB, twice |
 | 3 | local windows silently drop variants | `hgfm.h:1941` vs `local_max_gbwt` | 80.9-92.4% retention; 83.9% of MHC variants at risk |
 
-## Experiment 0 — do this before writing any Rust
+## Experiment 0 — partly done, and it changed the question
+
+**Update: the convergence half is measured. See `convergence_trace.md`.**
+
+`printInfo` already logs the per-generation curve under `--verbose`, so the
+convergence question was answerable on a laptop rather than a rented 1 TB box.
+Six chromosomes plus a combined build establish:
+
+- doubling **converges cleanly**, 14-18 generations per chromosome, 22 combined;
+- the construction **peak never exceeds the finished size by more than 4.6%** —
+  there is no transient explosion to absorb, which is what makes the
+  external-memory design viable;
+- combining chromosomes costs **8 more generations but only 0.84% more nodes**,
+  so per-chromosome numbers are additive;
+- chr6, the densest chromosome, is **not** an outlier.
+
+It also produced a contradiction: the measured curve extrapolates to ~3.43e9
+nodes, **80% of the 2^32 ceiling**, when the real 32-bit build overflowed. So
+the main graph should have fit and did not. The leading hypothesis is that the
+overflow is in the **repeat index** (`rfm.h`, its own `PathGraph`, sharing the
+error string in `gbwt_graph.h`) rather than in the main graph.
+
+**E0 therefore still needs to run, with a changed purpose:** not "does it
+converge" but "where does it overflow". The decisive cheap form is a single
+whole-genome 32-bit build with `--no-repeat-index`; if that completes, the
+target is the repeat index, not the main doubling loop. It needs ~144 GB, so it
+is one instance-hour, not an exploratory rental.
+
+Note also that measured peak RSS (10-21 GB for single chromosomes) sits far
+above the node arrays alone, so `PathGraph` does not dominate `hisat2-build`
+peak at these scales. **Bounding `PathGraph` will not by itself bound the
+build** — the GFM and local index construction have to be accounted for too.
+
+## Experiment 0 (original framing, superseded above)
 
 **Rent a 1-2 TB machine and run the existing 64-bit C++ builder to completion.**
 
