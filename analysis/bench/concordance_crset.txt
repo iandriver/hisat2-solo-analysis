@@ -1,0 +1,80 @@
+==================================================================
+                         HISAT2             CellRanger        
+==================================================================
+cells called                          1,132              1,222
+features                             32,364             33,538
+total UMIs                        8,628,875          9,235,144
+
+--- cells ---
+  shared            1,127
+  HISAT2 only      5
+  CellRanger only  95
+  Jaccard           0.9185
+
+--- features ---
+  shared gene ids   32,364
+  expressed in either 19,316
+
+--- agreement on shared cells ---
+  per-gene totals   Pearson(log1p) 0.9550   Spearman 0.9552
+  per-cell totals   Pearson(log1p) 0.9950   Spearman 0.9941
+  UMIs on shared cells  8,618,514 vs 9,130,347  (-5.61%)
+
+--- largest disagreements (genes with >=50 UMIs total) ---
+  11123 genes qualify
+
+  gene           id               HISAT2 CellRanger     log2
+  OLFM3          ENSG00000118      12992          0   +13.67
+  FAM153CP       ENSG00000204       5234          2   +10.77
+  ENSG0000027179 ENSG00000271        636          0    +9.32
+  SCO2           ENSG00000284        454          0    +8.83
+  ENSG0000025373 ENSG00000253        337          0    +8.40
+  NEUROG2-AS1    ENSG00000249        323          0    +8.34
+  FAM66A         ENSG00000227        199          0    +7.64
+  LINC01801      ENSG00000267        179          0    +7.49
+  MIR497HG       ENSG00000267        331          1    +7.38
+  PALM2AKAP2     ENSG00000157        163          0    +7.36
+  CFAP298-TCP10L ENSG00000265        157          0    +7.30
+  XACT           ENSG00000241        148          0    +7.22
+  LINC02244      ENSG00000259        144          0    +7.18
+  CATIP          ENSG00000158        286          1    +7.16
+  LHFPL1         ENSG00000182        131          0    +7.04
+  ............................................................
+  ENSG0000028497 ENSG00000284          0         61    -5.95
+  ENSG0000025847 ENSG00000258          0         62    -5.98
+  ENSG0000025952 ENSG00000259          0         69    -6.13
+  ENSG0000027010 ENSG00000270          0         82    -6.38
+  ENSG0000028505 ENSG00000285          0         90    -6.51
+  ENSG0000027471 ENSG00000274          0         90    -6.51
+  SLC71A3P       ENSG00000196          2        282    -6.56
+  PET117         ENSG00000232          0         98    -6.63
+  C19orf48P      ENSG00000167          0        100    -6.66
+  ENSG0000028298 ENSG00000282          0        129    -7.02
+  ENSG0000026873 ENSG00000268          0        131    -7.04
+  SLC35E2A       ENSG00000215          0        138    -7.12
+  FAM89B         ENSG00000176          0        671    -9.39
+  PYURF          ENSG00000145          0        798    -9.64
+  CAST           ENSG00000153          1       1938    -9.92
+
+  within 2x         10505 / 11123  (94.4%)
+
+--- HLA genes ---
+  gene               HISAT2 CellRanger     log2
+  HLA-DQB2               45         19    +1.20
+  HLA-DQA1             2565       2202    +0.22
+  HLA-C               16891      16601    +0.02
+  HLA-F                1203       1221    -0.02
+  HLA-DPB1             7597       7725    -0.02
+  HLA-DMA              1691       1783    -0.08
+  HLA-DPA1            10150      10738    -0.08
+  HLA-A               15431      16406    -0.09
+  HLA-DQB1             2583       2758    -0.09
+  HLA-DRA             18623      20144    -0.11
+  HLA-DMB              1561       1714    -0.13
+  HLA-DOB               218        240    -0.14
+  HLA-E                7352       8154    -0.15
+  HLA-DOA               142        163    -0.20
+  HLA-B               23517      28916    -0.30
+  HLA-DRB1             6525       9221    -0.50
+  HLA-DQA2              416       1433    -1.78
+  HLA-DRB5              328       1817    -2.47

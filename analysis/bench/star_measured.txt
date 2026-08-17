@@ -1,0 +1,12 @@
+STAR 2.7.11b (Homebrew ARM64) measurements, GRCh38 + GENCODE v50
+index size on disk:  29G
+--- genomeGenerate ---
+     8776.08 real      6260.33 user       259.46 sys
+         30627299328  maximum resident set size
+--- mapping-attempt peak RSS (genome load dominates) ---
+s_1.time: 31.30 GB
+star_test.time: 12.06 GB
+--- outcome ---
+6/6 consecutive failures: Transcriptome.cpp:18 could not open input file /geneInfo.tab
+(empty dir prefix; geneInfo.tab present in genomeDir). 2 earlier runs succeeded
+with identical arguments, and 1 run mapped 0 reads yet printed ALL DONE.

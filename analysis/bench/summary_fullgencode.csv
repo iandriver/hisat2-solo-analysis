@@ -1,0 +1,15 @@
+Number of Reads,66601887
+Reads With Valid Barcodes,0.961458
+Reads Mapped to Gene: Unique Gene,0.440977
+Reads Unmapped,0.122667
+Reads With No Gene,0.313581
+Reads Multi-Gene,0.100360
+Barcodes Ambiguous 1MM,1472666
+Barcodes Ambiguous Resolved,466169
+Sequencing Saturation,0.689115
+Barcodes With UMIs,218394
+Total Genes Detected,27459
+Total UMIs,9130654
+Estimated Number of Cells,1135
+UMIs in Cells,8249378
+Fraction of UMIs in Cells,0.903482

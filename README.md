@@ -125,6 +125,36 @@ above says retention barely moves alignment anyway. The defensible reading is
 that the T1 numbers were obtained with a partial variant set in those windows,
 making them a floor rather than a ceiling.
 
+### Human 10x benchmark: memory holds, runtime unmeasurable here (`analysis/bench`)
+
+PBMC 1k v3, 66.6M read pairs, GRCh38 + GENCODE v50, against CellRanger's own
+published output for the same sample.
+
+| | HISAT2-solo (graph) | STAR (linear) |
+|---|---|---|
+| index on disk | **6.5 GB** | 29 GB |
+| peak RSS, mapping | **9.04-9.43 GB** | 31.3 GB |
+| index build | impossible at this scale | 2 h 26 m, 30.6 GB |
+
+Concordance with CellRanger: **cell Jaccard 0.9185**, per-cell UMI totals
+r = 0.9950, per-gene r = 0.9550, 94.4% of genes within 2x.
+
+Two things the benchmark turned up that matter more than the ratios:
+
+- **Pointing HISAT2-solo at a raw GENCODE GTF silently discards ~10% of reads.**
+  Full v50 (78,941 genes) leaves 10.04% of reads multi-gene and dropped; the
+  CellRanger-filtered set (32,364) leaves 1.58%. This is why CellRanger ships a
+  filtered reference.
+- **Processed pseudogenes of ribosomal proteins are the recurring disagreement.**
+  `OLFM3` scores 12,992 UMIs against CellRanger's 0 because `RPSAP19` — an RPSA
+  pseudogene in neither reference — sits entirely inside OLFM3's first exon. The
+  mouse three-way comparison hit the same mechanism from the other direction.
+
+No runtime claim is made: three identical runs spanned 431.9 s to 4,398.7 s
+under macOS Spotlight load, while peak RSS moved less than 4%. STARsolo itself
+could not be run — the Homebrew ARM64 build fails nondeterministically resolving
+`geneInfo.tab`, and one run mapped 0 reads while printing `ALL DONE!`.
+
 ### Where the advantage does not appear
 
 Recorded because they bound the claim:
@@ -150,6 +180,7 @@ analysis/filt        pseudogene variant filter and its falsification
 analysis/cmp         three-way comparison, HISAT2 / STAR / rustar
 analysis/hap         variant-retention A/B: halving vs binary search
 analysis/bias        reference-bias dose-response across retention levels
+analysis/bench       human 10x benchmark: footprint vs STAR, concordance vs CellRanger
 analysis/probe       build-outcome prediction; where variant loss lands
 analysis/aws         cloud build stages and reports (chr1 probe, whole-genome attempts)
 upstream/            the two upstream issue writeups
