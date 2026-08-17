@@ -51,6 +51,12 @@ For scale on how much precision is being bought and never used: chr22 required
 10. The index is disambiguated to a resolution roughly two orders of magnitude
 beyond the longest query.
 
+> **Superseded in part by `order_bounding_test.md`.** The opportunity below is
+> real, but truncating the doubling loop alone yields an index the aligner
+> cannot query (100 reads unfinished in 120 s). Capturing it needs changes to
+> the GFM construction and search, not a bounded loop. The ranking in the next
+> section was premature.
+
 ## Consequence: this reorders the whole plan
 
 The builder design assumed the fix was 64-bit ids plus external memory, because

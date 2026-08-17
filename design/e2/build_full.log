@@ -1,0 +1,966 @@
+Settings:
+  Output files: "/private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/idx_full/c22.*.ht2"
+  Line rate: 7 (line is 128 bytes)
+  Lines per side: 1 (side is 128 bytes)
+  Offset rate: 4 (one in 16)
+  FTable chars: 10
+  Strings: unpacked
+  Local offset rate: 3 (one in 8)
+  Local fTable chars: 6
+  Local sequence length: 57344
+  Local sequence overlap between two consecutive indexes: 1024
+  Endianness: little
+  Actual local endianness: little
+  Sanity checking: disabled
+  Assertions: disabled
+  Random seed: 0
+  Sizeofs: void*:8, int:4, long:8, size_t:8
+Input files DNA, FASTA:
+  /private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/chr22.fa
+Reading reference sizes
+  Time reading reference sizes: 00:00:00
+Calculating joined length
+Writing header
+Reserving space for joined string
+Joining reference sequences
+  Time to join reference sequences: 00:00:00
+  Time to read SNPs and splice sites: 00:00:01
+Generation 0 (40925912 -> 40925912 nodes, 0 ranks)
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+Generation 1 (41181388 -> 41181388 nodes, 0 ranks)
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+Generation 2 (41693348 -> 41693348 nodes, 0 ranks)
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+Generation 3 (42721843 -> 42721843 nodes, 0 ranks)
+BUILT FROM_INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+RESIZE NODES: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 44800054
+0 0
+0 0
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 2
+SORT NODES: 2
+MERGE, UPDATE RANK: 0
+Generation 4 (44800054 -> 43634305 nodes, 31503611 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 17997660
+1 17888970
+1 7747675
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+BUILD TABLE: 0
+BUILD INDEX: 0
+COUNTED NEW NODES: 1
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 1
+Generation 5 (44991294 -> 44104866 nodes, 37952895 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 18258417
+1 18029705
+1 7816744
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+BUILD TABLE: 0
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 0
+Generation 6 (45355729 -> 44293635 nodes, 41577438 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 18405528
+1 18063206
+1 7824901
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 1
+BUILD TABLE: 1
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 1
+Generation 7 (44997845 -> 44386691 nodes, 43078776 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 18524704
+1 18072155
+1 7789832
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+BUILD TABLE: 0
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 0
+Generation 8 (45076213 -> 44682901 nodes, 44121075 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 18807558
+1 18090732
+1 7784611
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 1
+BUILD TABLE: 1
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 1
+Generation 9 (47229136 -> 46835906 nodes, 45464252 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 20938953
+1 18109578
+1 7787375
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+BUILD TABLE: 0
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 1
+TOTAL TIME: 1
+Generation 10 (58659139 -> 57760349 nodes, 57707747 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 31852395
+1 18120606
+1 7787348
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+BUILD TABLE: 0
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 0
+Generation 11 (57780043 -> 57771194 nodes, 57753152 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 31855197
+1 18128649
+1 7787348
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 1
+BUILD TABLE: 1
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 1
+Generation 12 (57779018 -> 57776652 nodes, 57772428 ranks)
+ALLOCATE FROM_TABLE: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 31858677
+1 18130627
+1 7787348
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 1
+BUILD TABLE: 1
+BUILD INDEX: 0
+COUNTED NEW NODES: 0
+COUNTED TEMP NODES: 0
+RESIZED NODES: 0
+RESIZED NODES: 0
+MADE NEW NODES: 0
+MERGEUPDATERANK: 0
+TOTAL TIME: 1
+Generation 13 (57776664 -> 57776238 nodes, 57776238 ranks)
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 31858263
+1 18130627
+1 7787348
+0 0
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+Generating edges... 
+NODE.TO -> GENOME POS: 0
+BUILD FROM_INDEX 0
+COUNTED NEW EDGES: 0
+MADE NEW EDGES: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 4644836
+1 3540730
+1 4720826
+1 1507524
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 1
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 5298007
+1 4325311
+1 3266817
+1 2262582
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 3754794
+1 3996196
+1 3963240
+1 1278719
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 3239614
+1 5021121
+1 5008850
+1 2499952
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+SORTED NEW EDGES: 1
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 16777216
+1 16777216
+1 16777216
+1 7444590
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 0
+RE-SORTED NODES: 0
+PROCESS EDGES: 0
+REMOVE Y: 0
+COUNT NUMBER IN EACH BIN: 0
+FINISHED FIRST ROUND: 0
+1 16937251
+1 16883359
+1 16959733
+1 7548777
+0 0
+0 0
+0 0
+0 0
+FINISHED RECURSIVE SORTS: 1
+SORT, Make index: 1
+TOTAL: 2
+Allocating ftab, absorbFtab
+Entering GFM loop
+Exited GFM loop
+fchr[A]: 0
+fchr[C]: 14413916
+fchr[G]: 29566633
+fchr[T]: 42559582
+fchr[$]: 58329119
+Exiting GFM::buildToDisk()
+Returning from initFromVector
+Wrote 40090460 bytes to primary GFM file: /private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/idx_full/c22.1.ht2
+Wrote 14444064 bytes to secondary GFM file: /private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/idx_full/c22.2.ht2
+Re-opening _in1 and _in2 as input streams
+Returning from GFM constructor
+Warning: a local graph exploded (offset: 504000, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 560320, length: 57344)
+Warning: a local graph exploded (offset: 923520, length: 57344)
+Warning: a local graph exploded (offset: 1155120, length: 57344)
+Warning: a local graph exploded (offset: 1393040, length: 57344)
+Warning: a local graph exploded (offset: 1217760, length: 57344)
+Warning: a local graph exploded (offset: 1274080, length: 57344)
+Warning: a local graph exploded (offset: 1274080, length: 57344)
+Warning: a local graph exploded (offset: 1393040, length: 57344)
+Warning: a local graph exploded (offset: 1274080, length: 57344)
+Warning: a local graph exploded (offset: 1393040, length: 57344)
+Warning: a local graph exploded (offset: 1274080, length: 57344)
+Warning: a local graph exploded (offset: 1217760, length: 57344)
+Warning: a local graph exploded (offset: 1393040, length: 57344)
+Warning: a local graph exploded (offset: 1393040, length: 57344)
+Warning: a local graph exploded (offset: 1393040, length: 57344)
+Warning: a local graph exploded (offset: 4122587, length: 57344)
+Warning: a local graph exploded (offset: 4291547, length: 57344)
+Warning: a local graph exploded (offset: 4291547, length: 57344)
+Warning: a local graph exploded (offset: 4291547, length: 57344)
+Warning: a local graph exploded (offset: 4291547, length: 57344)
+Warning: a local graph exploded (offset: 4291547, length: 57344)
+Warning: a local graph exploded (offset: 4291547, length: 57344)
+Warning: a local graph exploded (offset: 4629467, length: 57344)
+Warning: a local graph exploded (offset: 4685787, length: 57344)
+Warning: a local graph exploded (offset: 4347867, length: 57344)
+Warning: a local graph exploded (offset: 4742107, length: 57344)
+Warning: a local graph exploded (offset: 4573147, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4742107, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4685787, length: 57344)
+Warning: a local graph exploded (offset: 4629467, length: 57344)
+Warning: a local graph exploded (offset: 4685787, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 4685787, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4629467, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 4742107, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4685787, length: 57344)
+Warning: a local graph exploded (offset: 4629467, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 4516827, length: 57344)
+Warning: a local graph exploded (offset: 4742107, length: 57344)
+Warning: a local graph exploded (offset: 4629467, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 4742107, length: 57344)
+Warning: a local graph exploded (offset: 4404187, length: 57344)
+Warning: a local graph exploded (offset: 5110889, length: 57344)
+Warning: a local graph exploded (offset: 4941929, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 5110889, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 5110889, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 5110889, length: 57344)
+Warning: a local graph exploded (offset: 4941929, length: 57344)
+Warning: a local graph exploded (offset: 5110889, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 4798427, length: 57344)
+Warning: a local graph exploded (offset: 4941929, length: 57344)
+Warning: a local graph exploded (offset: 5392489, length: 57344)
+Warning: a local graph exploded (offset: 5674089, length: 57344)
+Warning: a local graph exploded (offset: 5786729, length: 57344)
+Warning: a local graph exploded (offset: 5955689, length: 57344)
+Warning: a local graph exploded (offset: 5843049, length: 57344)
+Warning: a local graph exploded (offset: 5899369, length: 57344)
+Warning: a local graph exploded (offset: 5730409, length: 57344)
+Warning: a local graph exploded (offset: 6012009, length: 57344)
+Warning: a local graph exploded (offset: 5843049, length: 57344)
+Warning: a local graph exploded (offset: 5955689, length: 57344)
+Warning: a local graph exploded (offset: 5843049, length: 57344)
+Warning: a local graph exploded (offset: 5786729, length: 57344)
+Warning: a local graph exploded (offset: 5674089, length: 57344)
+Warning: a local graph exploded (offset: 5955689, length: 57344)
+Warning: a local graph exploded (offset: 5786729, length: 57344)
+Warning: a local graph exploded (offset: 5674089, length: 57344)
+Warning: a local graph exploded (offset: 5786729, length: 57344)
+Warning: a local graph exploded (offset: 5674089, length: 57344)
+Warning: a local graph exploded (offset: 5674089, length: 57344)
+Warning: a local graph exploded (offset: 5786729, length: 57344)
+Warning: a local graph exploded (offset: 5955689, length: 57344)
+Warning: a local graph exploded (offset: 6124649, length: 57344)
+Warning: a local graph exploded (offset: 6293609, length: 57344)
+Warning: a local graph exploded (offset: 6180969, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6406249, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6124649, length: 57344)
+Warning: a local graph exploded (offset: 6293609, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6406249, length: 57344)
+Warning: a local graph exploded (offset: 6124649, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6124649, length: 57344)
+Warning: a local graph exploded (offset: 6518889, length: 57344)
+Warning: a local graph exploded (offset: 6575209, length: 57344)
+Warning: a local graph exploded (offset: 6687849, length: 57344)
+Warning: a local graph exploded (offset: 6575209, length: 57344)
+Warning: a local graph exploded (offset: 6575209, length: 57344)
+Warning: a local graph exploded (offset: 7332649, length: 57344)
+Warning: a local graph exploded (offset: 7501609, length: 57344)
+Warning: a local graph exploded (offset: 7276329, length: 57344)
+Warning: a local graph exploded (offset: 7501609, length: 57344)
+Warning: a local graph exploded (offset: 7501609, length: 57344)
+Warning: a local graph exploded (offset: 7501609, length: 57344)
+Warning: a local graph exploded (offset: 7501609, length: 57344)
+Warning: a local graph exploded (offset: 7952169, length: 57344)
+Warning: a local graph exploded (offset: 7895849, length: 57344)
+Warning: a local graph exploded (offset: 8008489, length: 57344)
+Warning: a local graph exploded (offset: 7895849, length: 57344)
+Warning: a local graph exploded (offset: 7952169, length: 57344)
+Warning: a local graph exploded (offset: 7952169, length: 57344)
+Warning: a local graph exploded (offset: 7895849, length: 57344)
+Warning: a local graph exploded (offset: 8233769, length: 57344)
+Warning: a local graph exploded (offset: 8233769, length: 57344)
+Warning: a local graph exploded (offset: 8233769, length: 57344)
+Warning: a local graph exploded (offset: 8965929, length: 57344)
+Warning: a local graph exploded (offset: 8684329, length: 57344)
+Warning: a local graph exploded (offset: 9022249, length: 57344)
+Warning: a local graph exploded (offset: 8684329, length: 57344)
+Warning: a local graph exploded (offset: 8684329, length: 57344)
+Warning: a local graph exploded (offset: 8684329, length: 57344)
+Warning: a local graph exploded (offset: 9022249, length: 57344)
+Warning: a local graph exploded (offset: 9022249, length: 57344)
+Warning: a local graph exploded (offset: 8684329, length: 57344)
+Warning: a local graph exploded (offset: 9022249, length: 57344)
+Warning: a local graph exploded (offset: 8684329, length: 57344)
+Warning: a local graph exploded (offset: 9022249, length: 57344)
+Warning: a local graph exploded (offset: 9472809, length: 57344)
+Warning: a local graph exploded (offset: 10036009, length: 57344)
+Warning: a local graph exploded (offset: 10373929, length: 57344)
+Warning: a local graph exploded (offset: 10486569, length: 57344)
+Warning: a local graph exploded (offset: 10824489, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10599209, length: 57344)
+Warning: a local graph exploded (offset: 10542889, length: 57344)
+Warning: a local graph exploded (offset: 10655529, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10542889, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10542889, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10542889, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10542889, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10430249, length: 57344)
+Warning: a local graph exploded (offset: 10711849, length: 57344)
+Warning: a local graph exploded (offset: 10542889, length: 57344)
+Warning: a local graph exploded (offset: 10880809, length: 57344)
+Warning: a local graph exploded (offset: 11106089, length: 57344)
+Warning: a local graph exploded (offset: 11218729, length: 57344)
+Warning: a local graph exploded (offset: 10937129, length: 57344)
+Warning: a local graph exploded (offset: 10993449, length: 57344)
+Warning: a local graph exploded (offset: 11049769, length: 57344)
+Warning: a local graph exploded (offset: 11218729, length: 57344)
+Warning: a local graph exploded (offset: 11049769, length: 57344)
+Warning: a local graph exploded (offset: 10937129, length: 57344)
+Warning: a local graph exploded (offset: 11049769, length: 57344)
+Warning: a local graph exploded (offset: 11049769, length: 57344)
+Warning: a local graph exploded (offset: 10937129, length: 57344)
+Warning: a local graph exploded (offset: 11049769, length: 57344)
+Warning: a local graph exploded (offset: 11218729, length: 57344)
+Warning: a local graph exploded (offset: 10937129, length: 57344)
+Warning: a local graph exploded (offset: 11218729, length: 57344)
+Warning: a local graph exploded (offset: 11218729, length: 57344)
+Warning: a local graph exploded (offset: 11725609, length: 57344)
+Warning: a local graph exploded (offset: 11669289, length: 57344)
+Warning: a local graph exploded (offset: 12119849, length: 57344)
+Warning: a local graph exploded (offset: 11838249, length: 57344)
+Warning: a local graph exploded (offset: 11781929, length: 57344)
+Warning: a local graph exploded (offset: 11894569, length: 57344)
+Warning: a local graph exploded (offset: 11950889, length: 57344)
+Warning: a local graph exploded (offset: 11838249, length: 57344)
+Warning: a local graph exploded (offset: 11950889, length: 57344)
+Warning: a local graph exploded (offset: 11950889, length: 57344)
+Warning: a local graph exploded (offset: 11838249, length: 57344)
+Warning: a local graph exploded (offset: 11838249, length: 57344)
+Warning: a local graph exploded (offset: 12345129, length: 57344)
+Warning: a local graph exploded (offset: 12232489, length: 57344)
+Warning: a local graph exploded (offset: 12570409, length: 57344)
+Warning: a local graph exploded (offset: 12345129, length: 57344)
+Warning: a local graph exploded (offset: 12570409, length: 57344)
+Warning: a local graph exploded (offset: 12345129, length: 57344)
+Warning: a local graph exploded (offset: 12570409, length: 57344)
+Warning: a local graph exploded (offset: 12570409, length: 57344)
+Warning: a local graph exploded (offset: 12345129, length: 57344)
+Warning: a local graph exploded (offset: 13020969, length: 57344)
+Warning: a local graph exploded (offset: 12964649, length: 57344)
+Warning: a local graph exploded (offset: 13020969, length: 57344)
+Warning: a local graph exploded (offset: 13020969, length: 57344)
+Warning: a local graph exploded (offset: 13020969, length: 57344)
+Warning: a local graph exploded (offset: 13020969, length: 57344)
+Warning: a local graph exploded (offset: 12964649, length: 57344)
+Warning: a local graph exploded (offset: 12964649, length: 57344)
+Warning: a local graph exploded (offset: 12964649, length: 57344)
+Warning: a local graph exploded (offset: 13133609, length: 57344)
+Warning: a local graph exploded (offset: 13189929, length: 57344)
+Warning: a local graph exploded (offset: 13527849, length: 57344)
+Warning: a local graph exploded (offset: 13189929, length: 57344)
+Warning: a local graph exploded (offset: 13189929, length: 57344)
+Warning: a local graph exploded (offset: 13189929, length: 57344)
+Warning: a local graph exploded (offset: 13189929, length: 57344)
+Warning: a local graph exploded (offset: 13189929, length: 57344)
+Warning: a local graph exploded (offset: 13865769, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13753129, length: 57344)
+Warning: a local graph exploded (offset: 13640489, length: 57344)
+Warning: a local graph exploded (offset: 13809449, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13640489, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13753129, length: 57344)
+Warning: a local graph exploded (offset: 13640489, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13640489, length: 57344)
+Warning: a local graph exploded (offset: 13584169, length: 57344)
+Warning: a local graph exploded (offset: 13753129, length: 57344)
+Warning: a local graph exploded (offset: 14091049, length: 57344)
+Warning: a local graph exploded (offset: 14260009, length: 57344)
+Warning: a local graph exploded (offset: 14260009, length: 57344)
+Warning: a local graph exploded (offset: 14260009, length: 57344)
+Warning: a local graph exploded (offset: 14260009, length: 57344)
+Warning: a local graph exploded (offset: 14260009, length: 57344)
+Warning: a local graph exploded (offset: 14654249, length: 57344)
+Warning: a local graph exploded (offset: 14710569, length: 57344)
+Warning: a local graph exploded (offset: 14654249, length: 57344)
+Warning: a local graph exploded (offset: 14710569, length: 57344)
+Warning: a local graph exploded (offset: 15330089, length: 57344)
+Warning: a local graph exploded (offset: 15330089, length: 57344)
+Warning: a local graph exploded (offset: 15330089, length: 57344)
+Warning: a local graph exploded (offset: 15330089, length: 57344)
+Warning: a local graph exploded (offset: 15668009, length: 57344)
+Warning: a local graph exploded (offset: 15386409, length: 57344)
+Warning: a local graph exploded (offset: 15668009, length: 57344)
+Warning: a local graph exploded (offset: 15386409, length: 57344)
+Warning: a local graph exploded (offset: 15386409, length: 57344)
+Warning: a local graph exploded (offset: 15668009, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16005929, length: 57344)
+Warning: a local graph exploded (offset: 16174889, length: 57344)
+Warning: a local graph exploded (offset: 16005929, length: 57344)
+Warning: a local graph exploded (offset: 16005929, length: 57344)
+Warning: a local graph exploded (offset: 16174889, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16005929, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16174889, length: 57344)
+Warning: a local graph exploded (offset: 16005929, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16005929, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16062249, length: 57344)
+Warning: a local graph exploded (offset: 16174889, length: 57344)
+Warning: a local graph exploded (offset: 17470249, length: 57344)
+Warning: a local graph exploded (offset: 17188649, length: 57344)
+Warning: a local graph exploded (offset: 17188649, length: 57344)
+Warning: a local graph exploded (offset: 17188649, length: 57344)
+Warning: a local graph exploded (offset: 17188649, length: 57344)
+Warning: a local graph exploded (offset: 18934569, length: 57344)
+Warning: a local graph exploded (offset: 19892009, length: 57344)
+Warning: a local graph exploded (offset: 19892009, length: 57344)
+Warning: a local graph exploded (offset: 19892009, length: 57344)
+Warning: a local graph exploded (offset: 20624169, length: 57344)
+Warning: a local graph exploded (offset: 20455209, length: 57344)
+Warning: a local graph exploded (offset: 20680489, length: 57344)
+Warning: a local graph exploded (offset: 20736809, length: 57344)
+Warning: a local graph exploded (offset: 20398889, length: 57344)
+Warning: a local graph exploded (offset: 20680489, length: 57344)
+Warning: a local graph exploded (offset: 20398889, length: 57344)
+Warning: a local graph exploded (offset: 20455209, length: 57344)
+Warning: a local graph exploded (offset: 20624169, length: 57344)
+Warning: a local graph exploded (offset: 20680489, length: 57344)
+Warning: a local graph exploded (offset: 20398889, length: 57344)
+Warning: a local graph exploded (offset: 20398889, length: 57344)
+Warning: a local graph exploded (offset: 20455209, length: 57344)
+Warning: a local graph exploded (offset: 20398889, length: 57344)
+Warning: a local graph exploded (offset: 20680489, length: 57344)
+Warning: a local graph exploded (offset: 20624169, length: 57344)
+Warning: a local graph exploded (offset: 20455209, length: 57344)
+Warning: a local graph exploded (offset: 20849449, length: 57344)
+Warning: a local graph exploded (offset: 20905769, length: 57344)
+Warning: a local graph exploded (offset: 20905769, length: 57344)
+Warning: a local graph exploded (offset: 20849449, length: 57344)
+Warning: a local graph exploded (offset: 20905769, length: 57344)
+Warning: a local graph exploded (offset: 20849449, length: 57344)
+Warning: a local graph exploded (offset: 20849449, length: 57344)
+Warning: a local graph exploded (offset: 20849449, length: 57344)
+Warning: a local graph exploded (offset: 21525289, length: 57344)
+Warning: a local graph exploded (offset: 21525289, length: 57344)
+Warning: a local graph exploded (offset: 22708009, length: 57344)
+Warning: a local graph exploded (offset: 22820649, length: 57344)
+Warning: a local graph exploded (offset: 22876969, length: 57344)
+Warning: a local graph exploded (offset: 22651689, length: 57344)
+Warning: a local graph exploded (offset: 22764329, length: 57344)
+Warning: a local graph exploded (offset: 22651689, length: 57344)
+Warning: a local graph exploded (offset: 22651689, length: 57344)
+Warning: a local graph exploded (offset: 22820649, length: 57344)
+Warning: a local graph exploded (offset: 22820649, length: 57344)
+Warning: a local graph exploded (offset: 22651689, length: 57344)
+Warning: a local graph exploded (offset: 22820649, length: 57344)
+Warning: a local graph exploded (offset: 22820649, length: 57344)
+Warning: a local graph exploded (offset: 22876969, length: 57344)
+Warning: a local graph exploded (offset: 22876969, length: 57344)
+Warning: a local graph exploded (offset: 23158569, length: 57344)
+Warning: a local graph exploded (offset: 23158569, length: 57344)
+Warning: a local graph exploded (offset: 23158569, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24003369, length: 57344)
+Warning: a local graph exploded (offset: 24510249, length: 57344)
+Warning: a local graph exploded (offset: 24735529, length: 57344)
+Warning: a local graph exploded (offset: 24510249, length: 57344)
+Warning: a local graph exploded (offset: 24510249, length: 57344)
+Warning: a local graph exploded (offset: 24510249, length: 57344)
+Warning: a local graph exploded (offset: 24510249, length: 57344)
+Warning: a local graph exploded (offset: 25918249, length: 57344)
+Warning: a local graph exploded (offset: 27382569, length: 57344)
+Warning: a local graph exploded (offset: 27326249, length: 57344)
+Warning: a local graph exploded (offset: 27382569, length: 57344)
+Warning: a local graph exploded (offset: 27382569, length: 57344)
+Warning: a local graph exploded (offset: 27382569, length: 57344)
+Warning: a local graph exploded (offset: 27664169, length: 57344)
+Warning: a local graph exploded (offset: 27664169, length: 57344)
+Warning: a local graph exploded (offset: 27664169, length: 57344)
+Warning: a local graph exploded (offset: 27664169, length: 57344)
+Warning: a local graph exploded (offset: 27664169, length: 57344)
+Warning: a local graph exploded (offset: 29128489, length: 57344)
+Warning: a local graph exploded (offset: 30480169, length: 57344)
+Warning: a local graph exploded (offset: 30480169, length: 57344)
+Warning: a local graph exploded (offset: 30480169, length: 57344)
+Warning: a local graph exploded (offset: 30480169, length: 57344)
+Warning: a local graph exploded (offset: 31099689, length: 57344)
+Warning: a local graph exploded (offset: 30987049, length: 57344)
+Warning: a local graph exploded (offset: 30874409, length: 57344)
+Warning: a local graph exploded (offset: 30705449, length: 57344)
+Warning: a local graph exploded (offset: 30818089, length: 57344)
+Warning: a local graph exploded (offset: 31493929, length: 57344)
+Warning: a local graph exploded (offset: 31437609, length: 57344)
+Warning: a local graph exploded (offset: 31493929, length: 57344)
+Warning: a local graph exploded (offset: 31493929, length: 57344)
+Warning: a local graph exploded (offset: 31493929, length: 57344)
+Warning: a local graph exploded (offset: 32226089, length: 57344)
+Warning: a local graph exploded (offset: 32451369, length: 57344)
+Warning: a local graph exploded (offset: 32451369, length: 57344)
+Warning: a local graph exploded (offset: 32451369, length: 57344)
+Warning: a local graph exploded (offset: 32226089, length: 57344)
+Warning: a local graph exploded (offset: 32226089, length: 57344)
+Warning: a local graph exploded (offset: 32451369, length: 57344)
+Warning: a local graph exploded (offset: 32564009, length: 57344)
+Warning: a local graph exploded (offset: 32845609, length: 57344)
+Warning: a local graph exploded (offset: 32620329, length: 57344)
+Warning: a local graph exploded (offset: 33352489, length: 57344)
+Warning: a local graph exploded (offset: 33127209, length: 57344)
+Warning: a local graph exploded (offset: 33014569, length: 57344)
+Warning: a local graph exploded (offset: 33070889, length: 57344)
+Warning: a local graph exploded (offset: 32958249, length: 57344)
+Warning: a local graph exploded (offset: 33183529, length: 57344)
+Warning: a local graph exploded (offset: 33127209, length: 57344)
+Warning: a local graph exploded (offset: 33183529, length: 57344)
+Warning: a local graph exploded (offset: 32958249, length: 57344)
+Warning: a local graph exploded (offset: 32958249, length: 57344)
+Warning: a local graph exploded (offset: 33070889, length: 57344)
+Warning: a local graph exploded (offset: 32958249, length: 57344)
+Warning: a local graph exploded (offset: 33183529, length: 57344)
+Warning: a local graph exploded (offset: 33127209, length: 57344)
+Warning: a local graph exploded (offset: 33070889, length: 57344)
+Warning: a local graph exploded (offset: 32958249, length: 57344)
+Warning: a local graph exploded (offset: 33127209, length: 57344)
+Warning: a local graph exploded (offset: 33070889, length: 57344)
+Warning: a local graph exploded (offset: 32958249, length: 57344)
+Warning: a local graph exploded (offset: 33127209, length: 57344)
+Warning: a local graph exploded (offset: 33577769, length: 57344)
+Warning: a local graph exploded (offset: 33577769, length: 57344)
+Warning: a local graph exploded (offset: 33577769, length: 57344)
+Warning: a local graph exploded (offset: 34253609, length: 57344)
+Warning: a local graph exploded (offset: 33915689, length: 57344)
+Warning: a local graph exploded (offset: 34253609, length: 57344)
+Warning: a local graph exploded (offset: 34253609, length: 57344)
+Warning: a local graph exploded (offset: 34253609, length: 57344)
+Warning: a local graph exploded (offset: 34704169, length: 57344)
+Warning: a local graph exploded (offset: 34478889, length: 57344)
+Warning: a local graph exploded (offset: 34704169, length: 57344)
+Warning: a local graph exploded (offset: 34478889, length: 57344)
+Warning: a local graph exploded (offset: 34704169, length: 57344)
+Warning: a local graph exploded (offset: 34478889, length: 57344)
+Warning: a local graph exploded (offset: 34704169, length: 57344)
+Warning: a local graph exploded (offset: 34760489, length: 57344)
+Warning: a local graph exploded (offset: 35042089, length: 57344)
+Warning: a local graph exploded (offset: 34873129, length: 57344)
+Warning: a local graph exploded (offset: 34816809, length: 57344)
+Warning: a local graph exploded (offset: 34873129, length: 57344)
+Warning: a local graph exploded (offset: 34760489, length: 57344)
+Warning: a local graph exploded (offset: 34873129, length: 57344)
+Warning: a local graph exploded (offset: 34760489, length: 57344)
+Warning: a local graph exploded (offset: 34873129, length: 57344)
+Warning: a local graph exploded (offset: 34760489, length: 57344)
+Warning: a local graph exploded (offset: 34760489, length: 57344)
+Warning: a local graph exploded (offset: 34873129, length: 57344)
+Warning: a local graph exploded (offset: 35380009, length: 57344)
+Warning: a local graph exploded (offset: 35211049, length: 57344)
+Warning: a local graph exploded (offset: 35492649, length: 57344)
+Warning: a local graph exploded (offset: 35211049, length: 57344)
+Warning: a local graph exploded (offset: 35211049, length: 57344)
+Warning: a local graph exploded (offset: 35211049, length: 57344)
+Warning: a local graph exploded (offset: 36506409, length: 57344)
+Warning: a local graph exploded (offset: 36506409, length: 57344)
+Warning: a local graph exploded (offset: 36506409, length: 57344)
+Warning: a local graph exploded (offset: 36506409, length: 57344)
+Warning: a local graph exploded (offset: 36506409, length: 57344)
+Warning: a local graph exploded (offset: 36506409, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36731689, length: 57344)
+Warning: a local graph exploded (offset: 36675369, length: 57344)
+Warning: a local graph exploded (offset: 36788009, length: 57344)
+Warning: a local graph exploded (offset: 36562729, length: 57344)
+Warning: a local graph exploded (offset: 36619049, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36788009, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36788009, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36675369, length: 57344)
+Warning: a local graph exploded (offset: 36956969, length: 57344)
+Warning: a local graph exploded (offset: 36675369, length: 57344)
+Warning: a local graph exploded (offset: 36788009, length: 57344)
+Warning: a local graph exploded (offset: 37407529, length: 57344)
+Warning: a local graph exploded (offset: 37182249, length: 57344)
+Warning: a local graph exploded (offset: 37069609, length: 57344)
+Warning: a local graph exploded (offset: 37351209, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37238569, length: 57344)
+Warning: a local graph exploded (offset: 37294889, length: 57344)
+Warning: a local graph exploded (offset: 37125929, length: 57344)
+Warning: a local graph exploded (offset: 37238569, length: 57344)
+Warning: a local graph exploded (offset: 37294889, length: 57344)
+Warning: a local graph exploded (offset: 37125929, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37238569, length: 57344)
+Warning: a local graph exploded (offset: 37351209, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37294889, length: 57344)
+Warning: a local graph exploded (offset: 37125929, length: 57344)
+Warning: a local graph exploded (offset: 37125929, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37407529, length: 57344)
+Warning: a local graph exploded (offset: 37125929, length: 57344)
+Warning: a local graph exploded (offset: 37294889, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37407529, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37238569, length: 57344)
+Warning: a local graph exploded (offset: 37294889, length: 57344)
+Warning: a local graph exploded (offset: 37013289, length: 57344)
+Warning: a local graph exploded (offset: 37238569, length: 57344)
+Warning: a local graph exploded (offset: 37125929, length: 57344)
+Warning: a local graph exploded (offset: 37351209, length: 57344)
+Warning: a local graph exploded (offset: 37801769, length: 57344)
+Warning: a local graph exploded (offset: 37520169, length: 57344)
+Warning: a local graph exploded (offset: 37576489, length: 57344)
+Warning: a local graph exploded (offset: 37745449, length: 57344)
+Warning: a local graph exploded (offset: 37689129, length: 57344)
+Warning: a local graph exploded (offset: 37632809, length: 57344)
+Warning: a local graph exploded (offset: 37463849, length: 57344)
+Warning: a local graph exploded (offset: 37858089, length: 57344)
+Warning: a local graph exploded (offset: 37463849, length: 57344)
+Warning: a local graph exploded (offset: 37689129, length: 57344)
+Warning: a local graph exploded (offset: 37520169, length: 57344)
+Warning: a local graph exploded (offset: 37745449, length: 57344)
+Warning: a local graph exploded (offset: 37632809, length: 57344)
+Warning: a local graph exploded (offset: 37801769, length: 57344)
+Warning: a local graph exploded (offset: 37745449, length: 57344)
+Warning: a local graph exploded (offset: 37463849, length: 57344)
+Warning: a local graph exploded (offset: 37801769, length: 57344)
+Warning: a local graph exploded (offset: 37520169, length: 57344)
+Warning: a local graph exploded (offset: 37632809, length: 57344)
+Warning: a local graph exploded (offset: 37801769, length: 57344)
+Warning: a local graph exploded (offset: 37520169, length: 57344)
+Warning: a local graph exploded (offset: 37632809, length: 57344)
+Warning: a local graph exploded (offset: 37801769, length: 57344)
+Warning: a local graph exploded (offset: 37463849, length: 57344)
+Warning: a local graph exploded (offset: 37520169, length: 57344)
+Warning: a local graph exploded (offset: 37745449, length: 57344)
+Warning: a local graph exploded (offset: 37632809, length: 57344)
+Warning: a local graph exploded (offset: 37520169, length: 57344)
+Warning: a local graph exploded (offset: 37632809, length: 57344)
+Warning: a local graph exploded (offset: 37463849, length: 57344)
+Warning: a local graph exploded (offset: 37689129, length: 57344)
+Warning: a local graph exploded (offset: 38027049, length: 57344)
+Warning: a local graph exploded (offset: 38308649, length: 55844)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38308649, length: 55844)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38308649, length: 55844)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38308649, length: 55844)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38308649, length: 55844)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38252329, length: 57344)
+Warning: a local graph exploded (offset: 38476109, length: 57344)
+Warning: a local graph exploded (offset: 38476109, length: 57344)
+Warning: a local graph exploded (offset: 38476109, length: 57344)
+Warning: a local graph exploded (offset: 38476109, length: 57344)
+Warning: a local graph exploded (offset: 38926669, length: 57344)
+Warning: a local graph exploded (offset: 38982989, length: 57344)
+Warning: a local graph exploded (offset: 39095629, length: 57344)
+Warning: a local graph exploded (offset: 38926669, length: 57344)
+Warning: a local graph exploded (offset: 38926669, length: 57344)
+Warning: a local graph exploded (offset: 38982989, length: 57344)
+Warning: a local graph exploded (offset: 38926669, length: 57344)
+Warning: a local graph exploded (offset: 38982989, length: 57344)
+Warning: a local graph exploded (offset: 38926669, length: 57344)
+Local indexes: 218487 of 228252 variant instances retained (95.7%), 548 local graph(s) over the edge budget.
+Returning from initFromVector
+Wrote 28935153 bytes to primary GFM file: /private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/idx_full/c22.5.ht2
+Wrote 10622980 bytes to secondary GFM file: /private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/idx_full/c22.6.ht2
+Re-opening _in5 and _in5 as input streams
+Returning from HGFM constructor
+Headers:
+    len: 39159777
+    gbwtLen: 58329120
+    nodes: 57776237
+    sz: 19579889
+    gbwtSz: 29164561
+    lineRate: 7
+    offRate: 4
+    offMask: 0xfffffff0
+    ftabChars: 10
+    eftabLen: 0
+    eftabSz: 0
+    ftabLen: 1048577
+    ftabSz: 4194308
+    offsLen: 3611015
+    offsSz: 14444060
+    lineSz: 128
+    sideSz: 128
+    sideGbwtSz: 104
+    sideGbwtLen: 208
+    numSides: 280429
+    numLines: 280429
+    gbwtTotLen: 35894912
+    gbwtTotSz: 35894912
+    reverse: 0
+    linearFM: No
+Total time for call to driver() for forward index: 00:00:37
+       37.77 real        95.50 user         4.10 sys
+         12397969408  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              810572  page reclaims
+                  54  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 435  voluntary context switches
+              228879  involuntary context switches
+       1146215237448  instructions retired
+        425837772586  cycles elapsed
+         12048164272  peak memory footprint

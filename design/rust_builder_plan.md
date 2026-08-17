@@ -165,8 +165,19 @@ issues.** Order 256 clears the observed maximum by 2x. For contrast, chr22 needs
 order 8192 to fully sort — the index is built to roughly two orders of magnitude
 more resolution than anything ever asks for.
 
-So B2 is not a fallback. It is the primary lever, and B1 demotes to an
-optimisation:
+**Tested in `order_bounding_test.md`, and the easy version does not work.**
+chr22 at order 256 builds fine and the index is 47% smaller, but the aligner
+cannot query it — 100 reads unfinished after 120 s against 1 s for stock —
+because merged nodes break the rank-to-position correspondence the search
+assumes. So the ordering below is wrong as stated: **B1 (64-bit + external
+memory) remains the route to a working whole-genome index**, since it changes
+only where data lives, and B2 is a larger, later change with a bigger payoff.
+
+The over-precision it would capture is nonetheless real (47% of the chr22
+index), so B2 stays on the roadmap — with the GFM construction and `locate`
+work priced in, which is what GCSA2 actually implements.
+
+The premature ranking, kept for the record:
 
 1. **Bound the order** — human whole-genome graph index becomes buildable at
    32 bits in ~176 GB, no new integer width, no external memory, no id format

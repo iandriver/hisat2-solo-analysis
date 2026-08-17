@@ -1,0 +1,29 @@
+--- /Users/iandriver/Downloads/hisat2/gbwt_graph.h	2026-08-07 10:39:31
++++ /private/tmp/claude-501/-Users-iandriver-Downloads-hisat2/2400b599-e2d4-4d43-95ad-d6f519cf1f37/scratchpad/e2/gbwt_graph.h	2026-08-17 12:25:04
+@@ -1799,7 +1799,26 @@
+     // In later generations, most nodes are already sorted, so we
+     //   perform a more expensive random access join with nodes in rank order
+     //   in return for avoiding having to sort by rank in order to prune nodes.
++    // E1 follow-up: bound the doubling order (GCSA2-style). Generation g means
++    // "sorted by paths of length 2^g", and the stock loop runs to FULL
++    // disambiguation -- order 8192 for chr22, >1024 for the whole genome --
++    // while the longest query ever issued against the global index is 131 bp.
++    //
++    // Gated on graph size because local indexes build PathGraphs too
++    // (hgfm.h:1921) and are <= 63,488 edges; those must still fully sort.
++    index_t maxGen_ = 0;
++    {
++        const char* e_ = getenv("HISAT2_MAX_GENERATION");
++        if(e_ != NULL && temp_nodes > 1000000) maxGen_ = (index_t)atoi(e_);
++    }
+     while(!isSorted()) {
++        if(maxGen_ > 0 && generation >= maxGen_) {
++            cerr << "PathGraph: stopping at generation " << generation
++                 << " (order " << (1ULL << generation) << "), "
++                 << (nodes.size() - ranks) << " of " << nodes.size()
++                 << " nodes still unsorted" << endl;
++            break;
++        }
+         lateGeneration();
+     }
+     // In the generateEdges method it is convenient to begin with nodes sorted by from.
