@@ -436,12 +436,50 @@ self-looping node for the tail `Z`, and it survives the doubling but is not a
 GFM row, which is also why the `Z` label bucket is always empty (`Y` holds
 exactly one row, the head).
 
+## Rung 3, step 4 — the GFM rows themselves, character for character
+
+The row *order* is not the `(label, ranking)` order `generateEdges` leaves
+behind. `nextRow` (`gbwt_graph.h:1609`) walks **path nodes in rank order and,
+within each node, its incoming edges**; `F` marks each node's first row, and a
+second independent cursor emits `M` by walking the same nodes and advancing by
+out-degree.
+
+Reaching that order needs the tail of `generateEdges` too: rewriting `edge.from`
+from a reference-graph node id to a path-node index while accumulating each
+node's out-degree (`:2561`), relabelling `Y` to `Z` and dropping the
+second-to-last node (`:2576`), then re-sorting and building the CSR (`:2604`).
+
+Checked by unpacking the BWT the index actually stores — graph sides pack 2 rows
+per byte with the F and M bitvectors interleaved after the characters — and
+comparing row by row:
+
+| case | rows | characters | F bits |
+|---|---|---|---|
+| 200 bp, 3 singles | 242 | **242/242** | **242/242** |
+| 509,431 bp, 1,881 variants | 532,723 | **532,723/532,723** | **532,723/532,723** |
+| 900,000 bp, 3,502 variants | 957,345 | **957,345/957,345** | **957,345/957,345** |
+
+### The tie-break the source misreads
+
+`PathEdgeToCmp` compares `(to, from)`, so the obvious implementation sorts the
+edges by `(ranking, from)`. That is wrong, and wrong in a way only a row-level
+comparison finds: on the 200 bp graph it swapped exactly **two** rows out of 242
+— 117 and 118, both inside a single node's edge group (F=1 then F=0).
+
+The stored order there is A then C, i.e. **label order**. The final
+`radix_sort_copy` is fed the edges in label-bucket order and is stable within a
+ranking, so ties resolve by label and the `from` field never participates.
+Sorting by `(ranking, from)` reorders pairs inside a node's group.
+
+Two rows in 242 is the kind of error that survives every aggregate check: the
+node count, the edge count, `fchr`, and every F bit were already exact while
+those two characters were transposed.
+
 ### What this leaves
 
-The path nodes and GFM rows are now correct and in HISAT2's own order. What
-remains for a graph `.ht2` is the graph-mode `buildToDisk` — 2 rows per byte and
-6 `index_t` per side instead of the linear layout rung 2 emits — and then the
-`.5`/`.6` local indexes.
+Everything the graph `.1.ht2` needs is now reproduced except the byte-level
+emission: the side packing (2 rows/byte, F and M bitvectors, 6 `index_t` of
+tallies per side) and the graph-mode `ftab`. Then the `.5`/`.6` local indexes.
 
 The whole-genome question the AWS run is answering (three live arrays, ~570 GB
 at 5.9e9 path nodes) is a property of exactly this loop, so an implementation

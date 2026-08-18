@@ -38,6 +38,7 @@
 #[path = "../graph.rs"]
 mod graph;
 
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::{env, fs};
 
@@ -255,6 +256,7 @@ fn main() {
     for n in &nodes { start[n.from as usize + 1] += 1; }
     for i in 1..start.len() { start[i] += start[i - 1]; }
 
+    let mut row_out: Vec<(u8, u8)> = Vec::new();
     let mut buckets: Vec<Vec<(u32, u32)>> = vec![Vec::new(); 6]; // (ranking, from)
     for &(f, t) in &b.edges {
         let li = match b.nodes[f as usize].0 {
@@ -272,8 +274,67 @@ fn main() {
     println!("\ngenerateEdges: {} path nodes, {} path edges (A {} C {} G {} T {} Y {} Z {})",
              nodes.len(), n_edges, buckets[0].len(), buckets[1].len(), buckets[2].len(),
              buckets[3].len(), buckets[4].len(), buckets[5].len());
+    // generateEdges drops a node further down, so record the count the header
+    // should agree with before that happens.
+    let n_path_nodes = nodes.len();
     println!("  numNodes = {} (path nodes - 1), gbwtLen = {} (path edges)",
-             nodes.len() - 1, n_edges);
+             n_path_nodes - 1, n_edges);
+
+    // ---- nextRow: the GFM row order (gbwt_graph.h:1609) -------------------
+    // Rows are NOT the (label, ranking) order generateEdges leaves behind. They
+    // are: path nodes in rank order, and within each node its INCOMING edges.
+    // F marks each node's first row. M is a separate cursor over the same nodes
+    // advancing by out-degree. So the tail of generateEdges has to run first:
+    //   * rewrite edge.from from a reference-graph node id to a path-node index,
+    //     and set each node's out-degree while doing it (:2561);
+    //   * relabel 'Y' to 'Z' and drop the second-to-last node (:2576);
+    //   * re-sort edges by (ranking, from) and build the CSR (:2604).
+    {
+        let mut ed: Vec<(u32, u32, u8)> = Vec::with_capacity(n_edges);  // (ranking, from, label)
+        for (li, bk) in buckets.iter().enumerate() {
+            let lab = b"ACGTYZ"[li];
+            for &(rank, from) in bk { ed.push((rank, from, lab)); }
+        }
+        // All edges leaving reference node X attach to the FIRST path node with
+        // that `from`; any later one keeps out-degree 0, which is what the C++
+        // merge-join does when several path nodes share a `from`.
+        let mut first_of: HashMap<u32, u32> = HashMap::new();
+        for (i, nd) in nodes.iter().enumerate() {
+            first_of.entry(nd.from).or_insert(i as u32);
+        }
+        let mut outdeg = vec![0u32; nodes.len()];
+        for e in ed.iter_mut() {
+            if let Some(&ni) = first_of.get(&e.1) { e.1 = ni; outdeg[ni as usize] += 1; }
+        }
+        // Drop the second-to-last node, keeping its out-degree on the survivor.
+        let n = nodes.len();
+        outdeg[n - 1] = outdeg[n - 2];
+        nodes[n - 2] = nodes[n - 1];
+        outdeg[n - 2] = outdeg[n - 1];
+        nodes.pop(); outdeg.pop();
+        for e in ed.iter_mut() {
+            if e.2 == b'Y' { e.2 = b'Z'; }
+            else if e.0 as usize >= nodes.len() { e.0 -= 1; }
+        }
+        // A STABLE sort on ranking alone. PathEdgeToCmp reads as (to, from), but
+        // the radix sort is fed the edges in label-bucket order and preserves it
+        // within a ranking, so ties resolve by label, not by `from`. Sorting by
+        // (ranking, from) instead swaps pairs inside a node's edge group.
+        ed.sort_by_key(|&(r, _, _)| r);
+
+        // rows in nextRow order, with the F bit
+        let mut rows: Vec<(u8, u8)> = Vec::with_capacity(ed.len());
+        let mut i = 0usize;
+        for node in 0..nodes.len() as u32 {
+            let mut first = true;
+            while i < ed.len() && ed[i].0 == node {
+                rows.push((ed[i].2, if first { 1 } else { 0 }));
+                first = false; i += 1;
+            }
+        }
+        println!("  nextRow order: {} rows ({} edges consumed of {})", rows.len(), i, ed.len());
+        row_out = rows;
+    }
 
     if a.len() >= 6 {
         // Cross-check against the header of the index HISAT2 actually wrote.
@@ -281,7 +342,7 @@ fn main() {
         let u = |o: usize| u32::from_le_bytes(idx[o..o + 4].try_into().unwrap()) as usize;
         let (their_gbwt, their_nodes) = (u(12), u(16));
         println!("  index header: gbwtLen {their_gbwt}, numNodes {their_nodes}");
-        let mut ok = their_nodes == nodes.len() - 1 && their_gbwt == n_edges;
+        let mut ok = their_nodes == n_path_nodes - 1 && their_gbwt == n_edges;
 
         // fchr is a content check, not just a total: it says how many rows carry
         // each label, so it fails if the rows are right in number but wrong in
@@ -303,7 +364,49 @@ fn main() {
         println!("  fchr rows per label: ours {ours:?} theirs {theirs:?}");
         if ours != theirs { ok = false; }
 
-        println!("  {}", if ok { "GRAPH GFM SIZES AND LABEL COUNTS MATCH" } else { "GFM SIZES DIFFER" });
+        // Unpack the BWT the index actually stores and compare row by row.
+        // Graph side layout, from gfm.h:4886: within each side's sideGbwtSz
+        // bytes, [0, sz/2) is the BWT at 4 rows/byte low-pair-first,
+        // [sz/2, 3sz/4) the F bitvector at 8 rows/byte with
+        // F_bpi = bpi + ((sideCur & 1) << 2), then M the same way.
+        let gbwt_off = 44 + 4 + n_pat * 4 + 4 + n_frag * 12;
+        let sgs = side_gbwt_sz;
+        let rows_per_side = sgs * 2;
+        let getrow = |r: usize| -> (u8, u8) {
+            let side = r / rows_per_side;
+            let off = r % rows_per_side;
+            let base = gbwt_off + side * side_sz;
+            let sc = off >> 2;
+            let bpi = off & 3;
+            let ch = (idx[base + sc] >> (bpi * 2)) & 3;
+            let f_sc = (sgs + sc) >> 1;
+            let f_bpi = bpi + ((sc & 1) << 2);
+            let f = (idx[base + f_sc] >> f_bpi) & 1;
+            (ch, f)
+        };
+        let mut cbad = 0usize; let mut fbad = 0usize; let mut first_bad = None;
+        for r in 0..row_out.len().min(their_gbwt) {
+            let (sc, sf) = getrow(r);
+            let ours_c = match row_out[r].0 { b'A' => 0u8, b'C' => 1, b'G' => 2, b'T' => 3,
+                                             _ => 0 /* Z is stored as A and not counted */ };
+            if sc != ours_c {
+                cbad += 1;
+                if first_bad.is_none() { first_bad = Some(r); }
+                if cbad <= 8 {
+                    println!("      row {r}: ours {} (F={}) theirs {} (F={})",
+                             row_out[r].0 as char, row_out[r].1, b"ACGT"[sc as usize] as char, sf);
+                }
+            }
+            if sf != row_out[r].1 { fbad += 1; }
+        }
+        let n = row_out.len().min(their_gbwt);
+        println!("  BWT rows: {}/{} characters match, {}/{} F bits match{}",
+                 n - cbad, n, n - fbad, n,
+                 match first_bad { Some(r) => format!("; first char mismatch at row {r}"), None => String::new() });
+        if cbad != 0 || fbad != 0 { ok = false; }
+
+        println!("  {}", if ok { "GRAPH GFM MATCHES: sizes, label counts, BWT rows and F bits" }
+                         else { "GRAPH GFM DIFFERS" });
         if !ok { std::process::exit(1); }
     }
 
