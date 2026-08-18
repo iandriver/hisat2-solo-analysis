@@ -169,12 +169,33 @@ are the shortest possible matches — but **byte-identical construction requires
 reproducing it**, which is the sort of thing only a byte-level target would
 have surfaced.
 
+### ftab and eftab — exact
+
+`ht2ftab` reproduces both tables: **1,048,577/1,048,577 ftab entries and 20/20
+eftab entries**.
+
+Walking the SA in row order, a suffix with `len - saElt >= ftabChars`
+contributes `ftab[sufInt+1]++`, packing the first `ftabChars` characters two
+bits each, leftmost most significant. A shorter suffix bumps `absorbCnt`, which
+lands in `absorbFtab[sufInt]` at the next long suffix — or in
+`absorbFtab[ftabLen-1]` if the walk ends with `absorbCnt > 0`. Finalisation then
+turns `ftab` into a running prefix sum, with absorbing entries storing `[lo,hi]`
+in `eftab` and keeping the marker `eftabCur ^ INDEX_MAX` in `ftab`, resolved by
+`ftabLo`/`ftabHi` (`gfm.h:2617`).
+
+One subtlety cost a wrong `eftab[17]` (900,000 against 900,001) before being
+found: **the empty suffix is not skipped.** `buildToDisk` sees
+`len - saElt == 0`, which is below `ftabChars`, so the `$` row counts as a short
+suffix and bumps `absorbCnt` like any other. That single row is what lifts the
+top of the table from `len` to `len + 1`, matching the writer's own
+`assert_eq(ftabHi(..., ftabLen-1), len+1)`.
+
 ### Rung 2 status
 
 Solved: section geometry, the front end (`nPat`, `plen`, `nFrag`, `rstarts`,
-`fchr`), the BWT row layout and packing, `zOffs`, and now the suffix-array
-order. Still to do before a byte-identical build: `ftab`, `eftab`, the `.2.ht2`
-SA sample, `refnames`, and emitting the file.
+`fchr`), the BWT row layout and packing, `zOffs`, the suffix-array order, and
+`ftab`/`eftab`. Remaining before a byte-identical build: the `.2.ht2` SA sample
+(every `2^offRate`-th row's `saElt`), `refnames`, and emitting the file.
 
 ## Next rungs
 

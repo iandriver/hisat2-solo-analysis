@@ -31,3 +31,7 @@ path = "src/bin/ht2sacheck.rs"
 [[bin]]
 name = "ht2sa"
 path = "src/bin/ht2sa.rs"
+
+[[bin]]
+name = "ht2ftab"
+path = "src/bin/ht2ftab.rs"
