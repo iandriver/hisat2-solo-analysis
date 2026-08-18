@@ -68,13 +68,14 @@ def wilson(k, n):
     return (c - h, c + h)
 
 def sign_test(diffs):
+    """Returns (up, down, z, p). z is reported alongside p because at these
+    counts p underflows to 0.0, and printing "p = 0" would be a false precision."""
     pos = sum(1 for d in diffs if d > 0); neg = sum(1 for d in diffs if d < 0)
     n = pos + neg
-    if n == 0: return pos, neg, 1.0
-    # normal approximation to the binomial, adequate at these n
+    if n == 0: return pos, neg, 0.0, 1.0
     z = (pos - n/2) / math.sqrt(n/4)
     p = math.erfc(abs(z)/math.sqrt(2))
-    return pos, neg, p
+    return pos, neg, z, p
 
 def report(donor, sites_path, present):
     sites = load_sites(sites_path)
@@ -126,10 +127,11 @@ def report(donor, sites_path, present):
                 x, y = cnt['linear'][k], cnt[a][k]
                 if x[r]+x[al] == 0 or y[r]+y[al] == 0: continue
                 diffs.append(y[al]/(y[r]+y[al]) - x[al]/(x[r]+x[al]))
-            pos, neg, p = sign_test(diffs)
+            pos, neg, z, p = sign_test(diffs)
             md = sum(diffs)/len(diffs) if diffs else 0.0
+            ps = f'p = {p:.3g}' if p > 0 else 'p < 1e-300'
             print(f'     {a} vs linear: mean per-site change {md:+.5f}, '
-                  f'{pos} up / {neg} down, sign test p = {p:.3g}')
+                  f'{pos} up / {neg} down, sign test z = {z:.1f}, {ps}')
 
 if __name__ == '__main__':
     present = {}
