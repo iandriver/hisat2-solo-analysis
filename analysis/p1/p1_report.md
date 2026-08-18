@@ -99,3 +99,34 @@ the experiment that decides whether the whole-genome build was worth doing.
   variants means more graph ambiguity; that cost is real and not yet quantified
   against its benefit.
 - One donor, one cell type, one library. The ancestry question needs the cohort.
+
+## Prediction for the Yoruba donor, registered before the alignment ran
+
+Index coverage of each donor's heterozygous sites, on the same four chromosomes
+(chr1, 6, 17, 19) so the contrast is not confounded by which chromosomes each
+donor's truth list covers:
+
+| index | NA12878 (CEU) | NA18502 (YRI) | disparity |
+|---|---|---|---|
+| `grch38_snp` (invented) | 93.69% | 86.83% | **6.87 pts** |
+| `wg64` (real phasing) | 94.73% | 91.13% | **3.60 pts** |
+
+NA18502 also carries **50.6% more heterozygous sites** than NA12878 over the
+same chromosomes (552,456 against 366,890) — more variation, and a smaller
+fraction of it known to either panel.
+
+Real phasing roughly **halves the ancestry disparity**, and its advantage over
+the distributed index is **four times larger for the Yoruba donor**: +4.30
+points (91.13 vs 86.83) against +1.04 points (94.73 vs 93.69).
+
+Given the mechanism established above — an index helps at a site if and only if
+it carries that site's variant — this predicts:
+
+> For NA18502, `snp_real` should beat `snp_invented` by roughly **four times**
+> the margin seen for NA12878, with the gain concentrated in the ~24,000 sites
+> where `grch38_snp` lacks the variant but ours carries it. If the two arms match
+> again, the mechanism story is wrong: the coverage gap would not be translating
+> into recovered reads.
+
+Recorded before the Yoruba alignment was run, so the interpretation cannot be
+chosen after seeing the number.
