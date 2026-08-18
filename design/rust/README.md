@@ -125,6 +125,31 @@ its bucket above. Total is `len` real positions plus one, matching
 the beginning.** That is consistent with `.2.ht2` row 0 holding a real suffix
 (176,766) and with the BWT's best shift being −1.
 
+### Where the two arrays actually diverge
+
+With `$`-last understood, the mapping is `their row r == our row r+1`, and it
+holds **exactly** up to their row 194,000:
+
+```
+k=    0  theirRow=      0  theirs=176766  our row      1 =176766  ok
+k=    1  theirRow=     16  theirs=759847  our row     17 =759847  ok
+k=12125  theirRow= 194000  theirs= 13331  our row 194001 = 13331  ok
+k=12126  theirRow= 194016  theirs=304543  our row 194017 =723517  DIFF
+```
+
+Two sortedness tests were run, and they are **not** equivalent — worth stating
+plainly because it changes which array is suspect:
+
+| array | test | result |
+|---|---|---|
+| ours | **all 900,000** adjacent pairs compared as suffixes | 0 out of order |
+| theirs | only **sampled** pairs, 16 rows apart (`.2.ht2` stores 1 in 16) | 0 out of order |
+
+Ours is therefore a verified suffix array. Theirs passes a test that **cannot
+see a permutation inside a 16-row window**, so it is much weaker evidence. The
+earlier reading — that ours must be wrong because a suffix array is unique —
+does not follow from it.
+
 ### The part that still does not add up
 
 That structure predicts a *uniform* offset of +1: their row k should equal our
@@ -132,11 +157,18 @@ row k+1 for every k below `len`. The `.2.ht2` sample says otherwise — +1 holds
 for 65.7% of sampled rows and +2 for 34.1%, with a sharp changeover at their row
 194,000. A uniform relabelling cannot produce that.
 
-So the emission order is now understood and it is not sufficient. Both arrays
-have `len+1` entries, so the residual cannot be a pure insertion either; the
-contents must differ. The next thing to check is `KarkkainenBlockwiseSA::qsort`
-(`blockwise_sa.h:436`) and the difference-cover tie-breaking, i.e. whether the
-bucket sort is a full suffix comparison or a bounded-depth one.
+So the emission order is understood and is not sufficient on its own. The
+divergence starts abruptly at one row rather than drifting, which is the
+signature of a **bucket boundary**: buckets are sorted independently and their
+pivots are appended after sorting. If a pivot is not in fact the maximum of its
+bucket range — for instance because bucket membership is decided by a
+bounded-depth comparison — the emitted order would be locally wrong there and
+everything after it would shift.
+
+Concrete next step: recover the `_sampleSuffs` pivot positions for this build
+and check whether 194,001 is one of them. `KarkkainenBlockwiseSA::qsort`
+(`blockwise_sa.h:436`) and the difference-cover tie-breaking are where a
+bounded-depth comparison would live.
 
 Until that is settled, no BWT we generate can match: the best full-range
 agreement is 79.5% at shift −1, which is exactly what a single insertion

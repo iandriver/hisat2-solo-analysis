@@ -23,3 +23,7 @@ debug = true
 [[bin]]
 name = "ht2invert"
 path = "src/bin/ht2invert.rs"
+
+[[bin]]
+name = "ht2sacheck"
+path = "src/bin/ht2sacheck.rs"
