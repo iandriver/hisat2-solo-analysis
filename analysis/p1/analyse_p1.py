@@ -32,7 +32,10 @@ ARMS = ['linear', 'snp_invented', 'snp_real']
 def load_sites(path):
     d = {}
     for line in open(path):
-        c, p, r, a = line.rstrip('\n').split('\t')
+        f = line.rstrip('\n').split('\t')
+        if len(f) != 4:
+            continue          # a stream still being written leaves a partial last line
+        c, p, r, a = f
         d[(c.replace('chr', ''), int(p))] = (r, a)
     return d
 
