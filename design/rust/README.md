@@ -165,10 +165,37 @@ bucket range — for instance because bucket membership is decided by a
 bounded-depth comparison — the emitted order would be locally wrong there and
 everything after it would shift.
 
-Concrete next step: recover the `_sampleSuffs` pivot positions for this build
-and check whether 194,001 is one of them. `KarkkainenBlockwiseSA::qsort`
-(`blockwise_sa.h:436`) and the difference-cover tie-breaking are where a
-bounded-depth comparison would live.
+**Bucket boundaries were checked and do not explain it.** A `--verbose` build
+reports 12 sample offsets and 8 buckets:
+
+| bucket | rows | cumulative end row |
+|---|---|---|
+| 1 | 147,690 | 147,689 |
+| 2 | 46,597 | **194,286** |
+| 3 | 147,534 | 341,820 |
+| 4 | 153,160 | 494,980 |
+| 5 | 154,614 | 649,594 |
+| 6 | 37,161 | 686,755 |
+| 7 | 145,777 | 832,532 |
+| 8 | 67,468 | 900,000 |
+
+The divergence begins between rows 194,001 and 194,016 — **inside** bucket 2,
+about 270 rows before its boundary at 194,286 — so it is not a
+pivot-append artefact at a bucket edge.
+
+Two loose threads for whoever picks this up:
+
+- `194,286` and `194,287` both appear in the stored `eftab`, alongside
+  `447,354`/`447,355` which straddle `fchr[2] = 447,355`. The `eftab` holds row
+  pairs for ftab entries that absorb short suffixes, so the coincidence with a
+  bucket end may be meaningful or may not.
+- Buckets 2 and 6 are much smaller than the rest (46,597 and 37,161 against
+  ~150,000), which suggests the sample offsets are unevenly spaced there.
+
+Localising the divergence to a single row needs a finer probe than `.2.ht2`
+provides, since it stores one value in 16. Reconstructing HISAT2's SA row by row
+from the BWT via LF-stepping would give full resolution, and the unpacking
+needed for that is already verified.
 
 Until that is settled, no BWT we generate can match: the best full-range
 agreement is 79.5% at shift −1, which is exactly what a single insertion
