@@ -125,89 +125,56 @@ its bucket above. Total is `len` real positions plus one, matching
 the beginning.** That is consistent with `.2.ht2` row 0 holding a real suffix
 (176,766) and with the BWT's best shift being −1.
 
-### Where the two arrays actually diverge
+### SOLVED — HISAT2 pads past the end with a character *larger* than all others
 
-With `$`-last understood, the mapping is `their row r == our row r+1`, and it
-holds **exactly** up to their row 194,000:
+Recovering HISAT2's **full** suffix array settled it. `.2.ht2` samples only one
+row in 16, too coarse to localise the difference, so `ht2sa` walks the stored
+BWT instead: `$` is the last row (`len`), and LF-stepping from there visits the
+row of every suffix in turn, labelling all 900,001 rows. Two checks confirm the
+walk: the reconstructed text matches the reference exactly, and after 900,000
+steps it lands on the stored `zOffs` (815,266).
 
-```
-k=    0  theirRow=      0  theirs=176766  our row      1 =176766  ok
-k=    1  theirRow=     16  theirs=759847  our row     17 =759847  ok
-k=12125  theirRow= 194000  theirs= 13331  our row 194001 = 13331  ok
-k=12126  theirRow= 194016  theirs=304543  our row 194017 =723517  DIFF
-```
+Against that full array, ours differed in 309,050 of 900,000 rows — but the two
+held the **same multiset** of positions, and HISAT2's array had only **11
+adjacent pairs out of lexicographic order**. A handful of far-displaced elements
+shifts a long run of rows by one, which is exactly the "+1 then +2" pattern seen
+earlier through the sampled view.
 
-Two sortedness tests were run, and they are **not** equivalent — worth stating
-plainly because it changes which array is suspect:
+All 11 violations have the same shape:
 
-| array | test | result |
-|---|---|---|
-| ours | **all 900,000** adjacent pairs compared as suffixes | 0 out of order |
-| theirs | only **sampled** pairs, 16 rows apart (`.2.ht2` stores 1 in 16) | 0 out of order |
+| their row | longer suffix | shorter suffix | len | shorter is a prefix of longer |
+|---|---|---|---|---|
+| 17,670 | 669,678 | 899,989 | 11 | yes |
+| 48,277 | 154,949 | 899,990 | 10 | yes |
+| 189,243 | 154,950 | 899,991 | 9 | yes |
+| … | … | … | … | yes |
+| 899,998 | 64,679 | 899,999 | 1 | yes |
 
-Ours is therefore a verified suffix array. Theirs passes a test that **cannot
-see a permutation inside a 16-row window**, so it is much weaker evidence. The
-earlier reading — that ours must be wrong because a suffix array is unique —
-does not follow from it.
+The suffixes involved are precisely the 11 shortest (lengths 11 down to 1), and
+in every case HISAT2 places the **longer** suffix first where true
+lexicographic order puts the shorter (prefix) first.
 
-### The part that still does not add up
+**The rule: HISAT2 sorts suffixes as though the text were padded past its end
+with a character greater than any real one, rather than terminated by a
+sentinel smaller than all.** That single rule accounts for both observations —
+the empty suffix (length 0) sorting last, and every proper prefix sorting after
+its extension.
 
-That structure predicts a *uniform* offset of +1: their row k should equal our
-row k+1 for every k below `len`. The `.2.ht2` sample says otherwise — +1 holds
-for 65.7% of sampled rows and +2 for 34.1%, with a sharp changeover at their row
-194,000. A uniform relabelling cannot produce that.
+Rebuilding our suffix array under that rule reproduces HISAT2's array **exactly:
+0 mismatches of 900,001 rows** (`sa_rule_check.rs`).
 
-So the emission order is understood and is not sufficient on its own. The
-divergence starts abruptly at one row rather than drifting, which is the
-signature of a **bucket boundary**: buckets are sorted independently and their
-pivots are appended after sorting. If a pivot is not in fact the maximum of its
-bucket range — for instance because bucket membership is decided by a
-bounded-depth comparison — the emitted order would be locally wrong there and
-everything after it would shift.
+Note this is a real deviation from a textbook suffix array, affecting the 11
+shortest suffixes here. It is almost certainly harmless for alignment — those
+are the shortest possible matches — but **byte-identical construction requires
+reproducing it**, which is the sort of thing only a byte-level target would
+have surfaced.
 
-**Bucket boundaries were checked and do not explain it.** A `--verbose` build
-reports 12 sample offsets and 8 buckets:
+### Rung 2 status
 
-| bucket | rows | cumulative end row |
-|---|---|---|
-| 1 | 147,690 | 147,689 |
-| 2 | 46,597 | **194,286** |
-| 3 | 147,534 | 341,820 |
-| 4 | 153,160 | 494,980 |
-| 5 | 154,614 | 649,594 |
-| 6 | 37,161 | 686,755 |
-| 7 | 145,777 | 832,532 |
-| 8 | 67,468 | 900,000 |
-
-The divergence begins between rows 194,001 and 194,016 — **inside** bucket 2,
-about 270 rows before its boundary at 194,286 — so it is not a
-pivot-append artefact at a bucket edge.
-
-Two loose threads for whoever picks this up:
-
-- `194,286` and `194,287` both appear in the stored `eftab`, alongside
-  `447,354`/`447,355` which straddle `fchr[2] = 447,355`. The `eftab` holds row
-  pairs for ftab entries that absorb short suffixes, so the coincidence with a
-  bucket end may be meaningful or may not.
-- Buckets 2 and 6 are much smaller than the rest (46,597 and 37,161 against
-  ~150,000), which suggests the sample offsets are unevenly spaced there.
-
-Localising the divergence to a single row needs a finer probe than `.2.ht2`
-provides, since it stores one value in 16. Reconstructing HISAT2's SA row by row
-from the BWT via LF-stepping would give full resolution, and the unpacking
-needed for that is already verified.
-
-Until that is settled, no BWT we generate can match: the best full-range
-agreement is 79.5% at shift −1, which is exactly what a single insertion
-partway through would produce.
-
-### A method note worth keeping
-
-An earlier pass gated on the first 20,000 rows, saw 99.99% agreement, and
-recorded the layout as solved. The full-range check gave 79.5%. Prefix samples
-are worthless here precisely because the divergence is a single insertion two
-thirds of the way in — the first 20,000 rows agree under *any* hypothesis that
-gets the early offset right.
+Solved: section geometry, the front end (`nPat`, `plen`, `nFrag`, `rstarts`,
+`fchr`), the BWT row layout and packing, `zOffs`, and now the suffix-array
+order. Still to do before a byte-identical build: `ftab`, `eftab`, the `.2.ht2`
+SA sample, `refnames`, and emitting the file.
 
 ## Next rungs
 

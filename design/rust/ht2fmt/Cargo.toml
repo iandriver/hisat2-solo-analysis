@@ -27,3 +27,7 @@ path = "src/bin/ht2invert.rs"
 [[bin]]
 name = "ht2sacheck"
 path = "src/bin/ht2sacheck.rs"
+
+[[bin]]
+name = "ht2sa"
+path = "src/bin/ht2sa.rs"
