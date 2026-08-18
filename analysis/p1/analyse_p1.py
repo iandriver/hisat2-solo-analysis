@@ -130,8 +130,8 @@ def report(donor, sites_path, present):
 
 if __name__ == '__main__':
     present = {}
-    for arm, path in (('snp_invented', f'{T}/vars_grch38_snp.tsv'),
-                      ('snp_real',     f'{T}/vars_wg64.tsv')):
+    for arm, path in (('snp_invented', f'{T}/vars_grch38_snp.tsv.gz'),
+                      ('snp_real',     f'{T}/vars_wg64.tsv.gz')):
         if os.path.exists(path):
             present[arm] = load_index_variants(path)
             print(f'{arm}: {len(present[arm])} single-SNV variants carried')
