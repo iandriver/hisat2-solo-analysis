@@ -24,7 +24,9 @@ H=/Users/iandriver/Downloads/hisat2
 NP=${NP:-10}
 
 mkdir -p $L/out
-for s in GM12878 GM18502; do
+# Donors may be passed as arguments so the first can start while the second
+# is still downloading; with none, do both.
+for s in ${@:-GM12878 GM18502}; do
   case $s in
     GM12878) SITES=$T/na12878.het.tsv ;;
     GM18502) SITES=$T/na18502.het.tsv ;;
@@ -44,6 +46,13 @@ for s in GM12878 GM18502; do
     POS=$L/pos_${s}_${a}.txt
     if [ "$PFX" = chr ]; then awk -v OFS='\t' '{print $1,$2}' $SITES > $POS
     else                      awk -v OFS='\t' '{sub(/^chr/,"",$1); print $1,$2}' $SITES > $POS
+    fi
+
+    # A truncated stream would silently shrink the site set, so require the
+    # full 50M reads before spending an hour aligning them.
+    N=$(gzip -dc $L/${s}_R2.fq.gz | wc -l)
+    if [ $((N/4)) -ne 50000000 ]; then
+      echo "$s: only $((N/4)) reads, expected 50000000 -- skipping" >> $L/out/status; break
     fi
 
     /usr/bin/time -l $H/hisat2 -x $IDX -U $L/${s}_R2.fq.gz -p $NP --no-unal \
