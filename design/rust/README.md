@@ -190,17 +190,270 @@ suffix and bumps `absorbCnt` like any other. That single row is what lifts the
 top of the table from `len` to `len + 1`, matching the writer's own
 `assert_eq(ftabHi(..., ftabLen-1), len+1)`.
 
-### Rung 2 status
+### Rung 2 — **PASSING: byte-identical**
 
-Solved: section geometry, the front end (`nPat`, `plen`, `nFrag`, `rstarts`,
-`fchr`), the BWT row layout and packing, `zOffs`, the suffix-array order, and
-`ftab`/`eftab`. Remaining before a byte-identical build: the `.2.ht2` SA sample
-(every `2^offRate`-th row's `saElt`), `refnames`, and emitting the file.
+`ht2emit` writes the whole index from a FASTA and byte-compares it against
+`hisat2-build`'s own output. This is the only test on the rung that cannot be
+passed by accident: a misunderstanding anywhere shows up as a differing offset
+rather than as a number that happens to agree.
+
+```
+ht2emit <reference.fa> <out_prefix> <reference.1.ht2>
+```
+
+| reference | `.1.ht2` | `.2.ht2` | `.3.ht2` | `.4.ht2` |
+|---|---|---|---|---|
+| `example/reference/22_20-21M.fa` (1 seq, 900,000 bp) | 4,494,550 B exact | 225,008 B exact | 26 B exact | 225,000 B exact |
+| `testdata/multi.fa` (5 seqs, 15,700 bp) | 4,199,874 B exact | 3,932 B exact | 89 B exact | 3,925 B exact |
+
+`.2.ht2` is trivial once the suffix array is right — a `1` sentinel followed by
+`saElt` for every `2^offRate`-th row — and it agreeing is the independent
+confirmation that the SA rule from the previous section is exactly right, at
+every sampled row rather than in aggregate.
+
+Two header fields are written twice and only the second value survives:
+`gbwtLen`/`numNodes` (offsets 12/16, `gfm.h:5166`) and `eftabLen` (offset 36,
+`gfm.h:5471`). All three go out as `0` in `writeFromMemory(justHeader=true)` and
+are seeked back over by `buildToDisk`. `eftabLen` is also always `ftabChars*2`
+regardless of how many entries actually absorb — the code computes the true
+count and then discards it (`gfm.h:5439`).
+
+### The second reference is what made the test worth running
+
+The single-sequence example passed on the first attempt. `multi.fa` — five
+sequences with a header description, leading Ns, a trailing N run, lowercase
+`n`, and a wholly lowercase sequence — failed on two counts, both of which the
+example is structurally unable to detect:
+
+1. **`refnames` stores the whole header line.** `_refnames_nospace`
+   (`gfm.h:1400`) is a *separate* whitespace-truncated copy, used only for
+   matching chromosome names against SNP and splice-site files. A header with no
+   description cannot tell the two apart.
+2. **`.3.ht2` holds more records than `.1.ht2` has `rstarts` entries.** A
+   sequence that ends in ambiguity contributes a record with `len == 0` carrying
+   the trailing count — `seqC` and `seqD` each add one, 9 records against 7
+   fragments. `joinToDisk` keeps only the non-empty records for `rstarts`, so
+   the two counts are genuinely different quantities and an index whose
+   reference happens not to end in N never reveals it.
+
+Neither would have shown up as a wrong number; both showed up as a wrong byte at
+a known offset.
+
+### Scope
+
+`.5`–`.8` are out of scope at this rung by design. `.5`/`.6` hold the
+hierarchical local indexes (`hgfm.h:2068`), which only exist once there is a
+graph to localise, and belong with the SNP/haplotype rung that introduces
+`PathGraph`.
+
+## Rung 3, step 1 — the reference graph, and where it stops matching
+
+`ht2graph` builds `RefGraph` from a FASTA plus `.snp`/`.haplotype` files and
+checks its size against HISAT2's own first log line. `PathGraph::makeFromRef`
+(`gbwt_graph.h:1821`) sets `temp_nodes = base.edges.size() + 1`, and `printInfo`
+reports `temp_nodes` as the left-hand number, so
+
+```
+Generation 0 (236 -> 236 nodes, 0 ranks)
+```
+
+is a free exact oracle for the edge count — available before any of the
+prefix-doubling machinery exists.
+
+```
+ht2graph <reference.fa> <snp> <haplotype> [<build.log>]
+```
+
+The construction itself is straightforward, and reproduced exactly: node 0 is a
+head labelled `Y`, reference position `p` is node `p + 1`, the tail `Z` is node
+`len + 1`, and each haplotype **duplicates its whole `[left, right]` span**
+rather than just the variant. Duplicating the span is what preserves phase — a
+read can only walk an allele combination some haplotype actually carries.
+
+| case | ours | HISAT2 | |
+|---|---|---|---|
+| 200 bp, 3 singles, 2 haplotypes | 236 | 236 | exact |
+| 509,431 bp, 86 deletions | 509,519 | 509,519 | exact |
+| 509,431 bp, 1,721 singles | 512,875 | 512,811 | **+64** |
+| 509,431 bp, 74 insertions | 509,884 | 509,715 | **+169** |
+| 900,000 bp, all 3,502 variants | 907,398 | 906,917 | **+481** |
+
+*(the +N rows are the naive walk alone; with reverse-determinisation added, every
+row below is exact — see the end of this section)*
+
+### The gap is reverse-determinisation, and it is not an edge case
+
+`RefGraph` finishes by testing `isReverseDeterministic` — *no node may have two
+incoming edges from nodes carrying the same label* (`gbwt_graph.h:191`) — and
+running a subset construction if it fails. Both the fragmented and the simple
+branch do this, so it is not a scale artifact.
+
+Reducing to one variant on a 200 bp reference isolates it exactly:
+
+| single variant | ours | HISAT2 | delta |
+|---|---|---|---|
+| one SNP | 204 | 204 | 0 |
+| one 3 bp deletion | 203 | 203 | 0 |
+| one 1 bp insertion | 206 | 204 | **−2** |
+
+**Every insertion costs exactly two edges, whatever base is inserted.** The
+mechanism is in the haplotype loop: an insertion consumes no reference position,
+so `for(j...) { if(prev_ALT_type == ALT_SNP_INS) j--; ... }` (`gbwt_graph.h:679`)
+revisits the same `j` and emits a *duplicate* of the reference node the
+insertion lands on. That duplicate carries the same label as the original and
+points at the same successor, which is precisely the violation
+`isReverseDeterministic` looks for. Collapsing it removes one node and two
+edges: the insertion's exit edge and the duplicate's in-edge become the same
+edge, as do the two exit edges.
+
+So the redundancy is generated deliberately by the simple walk and cleaned up
+afterwards by the determinisation, rather than being avoided. Reproducing
+`RefGraph` means reproducing both halves — a builder that emits the tidier graph
+directly would not match, and on the full example set the correction is **13.7%
+of all variant edges**, not a rounding error.
+
+Deletions needing no correction is the useful control: they add an edge but no
+node, so they cannot create a duplicate-label predecessor.
+
+Singles contribute 64 of the 481 (3.7% of 1,721), which the one-SNP case shows
+is not intrinsic to a SNP — it comes from variants close enough to interact.
+
+### With the subset construction added: exact everywhere
+
+`reverse_determinize` implements `gbwt_graph.h:1015` — walk backward from the
+tail `Z`, and at each composite node collect the predecessors of every member,
+group them by label, and share any group whose member set already exists. That
+sharing is what collapses the duplicates.
+
+| case | ours | HISAT2 |
+|---|---|---|
+| 200 bp, 3 singles | 236 | 236 |
+| 509,431 bp, 1,721 singles | 512,811 | 512,811 |
+| 509,431 bp, 74 insertions | 509,715 | 509,715 |
+| 509,431 bp, 86 deletions | 509,519 | 509,519 |
+| 509,431 bp, all 1,881 | 513,179 | 513,179 |
+| **900,000 bp, all 3,502, two fragments** | **906,917** | **906,917** |
+
+The last row is the one that carries weight: at 900,000 bp HISAT2 takes its
+*fragmented automaton* branch (`jlen >= 1 << 16`), building per-fragment
+automata and merging them, which is different code from the single-chain walk
+reproduced here. The two agree exactly. The determinisation is evidently what
+makes the branch invisible — whatever redundancy the fragmenting introduces is
+removed by the same subset construction.
+
+The tool also asserts the post-condition the construction exists to establish:
+no node with two same-label predecessors, checked on the output rather than
+assumed.
+
+## Rung 3, step 2 — the prefix doubling, matched generation for generation
+
+`ht2path` runs the doubling over the graph `ht2graph` builds and compares the
+**whole** curve, not just its first line. `generation` means "sorted by paths of
+length 2^g", construction runs `while(!isSorted())`, and each generation prints
+`temp_nodes -> nodes, ranks` — three numbers per generation, all of which depend
+on the exact pruning rule. A wrong rule diverges within a generation or two and
+never recovers, so this is not a test that can be passed approximately.
+
+```
+ht2path <reference.fa> <snp> <haplotype> <build.log>
+```
+
+| case | generations | result |
+|---|---|---|
+| 200 bp, 3 singles | 6 | all three numbers exact, every generation |
+| 509,431 bp, 1,881 variants | 11 | exact |
+| 900,000 bp, 3,502 variants, two fragments | 11 | exact |
+
+99 numbers across 33 generation lines, none off by one.
+
+```
+  gen |          ours          |         HISAT2         |
+    4 |    958371    939876 802762 |    958371    939876 802762 |
+    5 |    948781    945155 882419 |    948781    945155 882419 |
+   10 |    954009    953833 953833 |    954009    953833 953833 |
+```
+
+### The four-way split is arithmetic, not just memory management
+
+HISAT2 divides the loop into `generationOne`, `earlyGeneration`,
+`firstPruneGeneration` and `lateGeneration`, which reads like a memory
+optimisation. It is not only that — the stages compute different things, and
+reproducing the curve means reproducing each:
+
+- **Generations 1–3 do no pruning at all**, so `nodes == temp_nodes` and
+  `ranks == 0`. Keys are packed into a single integer, the left key shifted up
+  by `3 * 2^(g-1)` bits. That is why the stage ends at 3: at generation 4 the
+  packed key would need 24 bits per side and no longer fits, so the
+  representation switches to a pair of ranks.
+- **Generation 4** does the same join, then a full sort by key and the first
+  pruning pass — and `mergeUpdateRank` has a *completely different body* for
+  this generation, built on `nextMaximalSet`, collapsing each maximal run that
+  shares a `from`.
+- **Generations 5+** skip already-sorted nodes entirely and re-join only the
+  unsorted ones, against a `from_table` built by sorting a copy by `from` while
+  the main list stays in rank order. The join output therefore arrives already
+  grouped by `key.first`, which is why there is no full sort in this stage — only
+  the within-block sort by `key.second` that `mergeUpdateRank` does itself.
+
+The pruning rule that matters is the one in the block walk: **a run of nodes
+sharing a single `from` is one path node seen several ways and collapses to one;
+a run spanning several `from` values is genuinely several nodes at the same
+rank** and all of them survive. Getting that backwards changes `nodes` in the
+first pruned generation and the curve never rejoins.
+
+## Rung 3, step 3 — `generateEdges`, checked against the index header
+
+With the nodes sorted, `generateEdges` (`gbwt_graph.h:2367`) turns them into GFM
+rows: each reference edge contributes one row per path node whose `from` is that
+edge's `to`, labelled by the character of the edge's `from` node, bucketed by
+label and sorted by the ranking it points at. That ordering is the BWT.
+
+This has its own oracle, and a better one than the log — the header of the index
+HISAT2 actually wrote, which comes from a different part of the pipeline
+entirely:
+
+| case | `numNodes` | `gbwtLen` |
+|---|---|---|
+| 200 bp, 3 singles | 240 = 240 | 242 = 242 |
+| 509,431 bp, 1,881 variants | 530,869 = 530,869 | 532,723 = 532,723 |
+| 900,000 bp, 3,502 variants | 953,832 = 953,832 | 957,345 = 957,345 |
+
+Better still, the per-label row counts match the stored `fchr`, which is a
+**content** check rather than a total — it says how many rows carry each
+character, so it fails if the rows are right in number but wrong in kind:
+
+| case | A | C | G | T |
+|---|---|---|---|---|
+| 200 bp | 81 | 58 | 42 | 60 |
+| 509,431 bp | 117,761 | 146,867 | 147,258 | 120,836 |
+| 900,000 bp | 224,717 | 251,539 | 252,066 | 229,022 |
+
+Exact on all three.
+
+`numNodes` is **path nodes − 1** and `gbwtLen` is the path-edge count exactly.
+The off-by-one is worth stating rather than absorbing: `makeFromRef` adds a final
+self-looping node for the tail `Z`, and it survives the doubling but is not a
+GFM row, which is also why the `Z` label bucket is always empty (`Y` holds
+exactly one row, the head).
+
+### What this leaves
+
+The path nodes and GFM rows are now correct and in HISAT2's own order. What
+remains for a graph `.ht2` is the graph-mode `buildToDisk` — 2 rows per byte and
+6 `index_t` per side instead of the linear layout rung 2 emits — and then the
+`.5`/`.6` local indexes.
+
+The whole-genome question the AWS run is answering (three live arrays, ~570 GB
+at 5.9e9 path nodes) is a property of exactly this loop, so an implementation
+that matches it generation for generation is the precondition for changing where
+those arrays live.
 
 ## Next rungs
 
-2. `22_20-21M.fa`, no variants — full index byte-identical to `hisat2-build`.
-3. Same with SNPs and haplotypes.
+2. ~~`22_20-21M.fa`, no variants — full index byte-identical to `hisat2-build`.~~
+   **Done**, on two references, for `.1`–`.4`.
+3. Same with SNPs and haplotypes — the first rung that needs `PathGraph`, and
+   the one that brings `.5`/`.6` into scope.
 4. chr1 against the three `analysis/hap` variant sets, matching measured retention.
 5. Alignment equivalence: SAM byte-identical at `-p 1 --seed 0 --reorder`.
 6. Whole genome, where no C++ reference output exists.
