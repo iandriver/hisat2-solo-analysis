@@ -100,9 +100,43 @@ leading empty suffix, and then ours contains **one extra element around our row
 
 Our suffix array is itself sound — an independent brute-force count found
 815,267 suffixes smaller than the whole string, matching it — so this is not a
-sorting bug. `InorderBlockwiseSA::nextSuffix()` simply does not emit "the suffix
-array including the empty suffix". What it does emit is the next thing to read,
-in `blockwise_sa.h`.
+sorting bug.
+
+### What `nextSuffix()` emits, from `blockwise_sa.h`
+
+`KarkkainenBlockwiseSA::nextBlock` (`blockwise_sa.h:924`) fills each bucket with
+positions strictly less than `len` — `bucket.resize(len); for(i < len)` in the
+all-inclusive branch, and `for(... i < len ...) bucket.push_back(i)` with
+`assert_lt(i, len)` in the bucketed one. The empty suffix is never a bucket
+member. Then, after sorting:
+
+```cpp
+if(hi != OFF_MASK) bucket.push_back(hi);   // non-final: append the RHS pivot
+else               bucket.push_back(len);  // final: append the $ suffix
+```
+
+So the emitted sequence is: sorted bucket, its pivot, sorted bucket, its
+pivot, ..., final sorted bucket, then **`len` — the empty suffix — last**.
+Appending the pivot after sorting is order-preserving because the pivot bounds
+its bucket above. Total is `len` real positions plus one, matching
+`size() == text.length()+1`.
+
+**HISAT2's suffix array is therefore the ordinary one with `$` at the END, not
+the beginning.** That is consistent with `.2.ht2` row 0 holding a real suffix
+(176,766) and with the BWT's best shift being −1.
+
+### The part that still does not add up
+
+That structure predicts a *uniform* offset of +1: their row k should equal our
+row k+1 for every k below `len`. The `.2.ht2` sample says otherwise — +1 holds
+for 65.7% of sampled rows and +2 for 34.1%, with a sharp changeover at their row
+194,000. A uniform relabelling cannot produce that.
+
+So the emission order is now understood and it is not sufficient. Both arrays
+have `len+1` entries, so the residual cannot be a pure insertion either; the
+contents must differ. The next thing to check is `KarkkainenBlockwiseSA::qsort`
+(`blockwise_sa.h:436`) and the difference-cover tie-breaking, i.e. whether the
+bucket sort is a full suffix comparison or a bounded-depth one.
 
 Until that is settled, no BWT we generate can match: the best full-range
 agreement is 79.5% at shift −1, which is exactly what a single insertion
