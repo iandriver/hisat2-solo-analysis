@@ -1,0 +1,88 @@
+snp_invented: 12921989 single-SNV variants carried
+snp_real: 12643877 single-SNV variants carried
+
+=== GM12878 ===
+  1950933 known het sites; 8689 covered at depth >= 20 in all three arms
+
+  -- all sites
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.46245    0.46172-0.46318         0.46921
+     snp_invented              0.46442    0.46372-0.46513         0.49030
+     snp_real                  0.46556    0.46485-0.46626         0.49098
+     snp_invented vs linear: mean per-site change +0.02108, 5797 up / 363 down, sign test z = 69.2, p < 1e-300
+     snp_real vs linear: mean per-site change +0.02176, 5924 up / 374 down, sign test z = 69.9, p < 1e-300
+
+  -- variant IN snp_invented (n=8042)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.45288    0.45204-0.45373         0.46950
+     snp_invented              0.45644    0.45563-0.45725         0.49213
+     snp_real                  0.45639    0.45558-0.45720         0.49236
+     snp_invented vs linear: mean per-site change +0.02262, 5716 up / 279 down, sign test z = 70.2, p < 1e-300
+     snp_real vs linear: mean per-site change +0.02285, 5716 up / 292 down, sign test z = 70.0, p < 1e-300
+
+  -- variant NOT in snp_invented (n=647)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.49008    0.48863-0.49152         0.46562
+     snp_invented              0.48961    0.48817-0.49106         0.46755
+     snp_real                  0.49460    0.49315-0.49604         0.47386
+     snp_invented vs linear: mean per-site change +0.00194, 81 up / 84 down, sign test z = -0.2, p = 0.815
+     snp_real vs linear: mean per-site change +0.00824, 208 up / 82 down, sign test z = 7.4, p = 1.37e-13
+
+  -- variant IN snp_real (n=8194)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.45415    0.45334-0.45496         0.46913
+     snp_invented              0.45708    0.45630-0.45786         0.49115
+     snp_real                  0.45873    0.45796-0.45951         0.49217
+     snp_invented vs linear: mean per-site change +0.02202, 5713 up / 297 down, sign test z = 69.9, p < 1e-300
+     snp_real vs linear: mean per-site change +0.02304, 5845 up / 296 down, sign test z = 70.8, p < 1e-300
+
+  -- variant NOT in snp_real (n=495)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.49717    0.49550-0.49884         0.47062
+     snp_invented              0.49780    0.49613-0.49947         0.47614
+     snp_real                  0.49719    0.49551-0.49886         0.47131
+     snp_invented vs linear: mean per-site change +0.00553, 84 up / 66 down, sign test z = 1.5, p = 0.142
+     snp_real vs linear: mean per-site change +0.00069, 79 up / 78 down, sign test z = 0.1, p = 0.936
+
+=== GM18502 ===
+  564301 known het sites; 3874 covered at depth >= 20 in all three arms
+
+  -- all sites
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.40127    0.40031-0.40223         0.45236
+     snp_invented              0.50254    0.50168-0.50340         0.47705
+     snp_real                  0.52915    0.52833-0.52998         0.47909
+     snp_invented vs linear: mean per-site change +0.02469, 2438 up / 240 down, sign test z = 42.5, p < 1e-300
+     snp_real vs linear: mean per-site change +0.02673, 2499 up / 245 down, sign test z = 43.0, p < 1e-300
+
+  -- variant IN snp_invented (n=3367)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.40198    0.40096-0.40300         0.45478
+     snp_invented              0.51167    0.51076-0.51257         0.48286
+     snp_real                  0.53642    0.53555-0.53729         0.48403
+     snp_invented vs linear: mean per-site change +0.02809, 2368 up / 157 down, sign test z = 44.0, p < 1e-300
+     snp_real vs linear: mean per-site change +0.02925, 2359 up / 161 down, sign test z = 43.8, p < 1e-300
+
+  -- variant NOT in snp_invented (n=507)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.39550    0.39261-0.39840         0.43630
+     snp_invented              0.41665    0.41392-0.41939         0.43843
+     snp_real                  0.46621    0.46365-0.46877         0.44630
+     snp_invented vs linear: mean per-site change +0.00212, 70 up / 83 down, sign test z = -1.1, p = 0.293
+     snp_real vs linear: mean per-site change +0.01000, 140 up / 84 down, sign test z = 3.7, p = 0.000183
+
+  -- variant IN snp_real (n=3490)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.39459    0.39359-0.39558         0.45058
+     snp_invented              0.50544    0.50455-0.50633         0.47804
+     snp_real                  0.53198    0.53114-0.53283         0.48057
+     snp_invented vs linear: mean per-site change +0.02747, 2387 up / 179 down, sign test z = 43.6, p < 1e-300
+     snp_real vs linear: mean per-site change +0.02999, 2447 up / 165 down, sign test z = 44.7, p < 1e-300
+
+  -- variant NOT in snp_real (n=384)
+     arm               pooled alt frac             95% CI   per-site mean
+     linear                    0.48845    0.48477-0.49212         0.46855
+     snp_invented              0.45810    0.45464-0.46157         0.46800
+     snp_real                  0.47967    0.47613-0.48322         0.46564
+     snp_invented vs linear: mean per-site change -0.00054, 51 up / 61 down, sign test z = -0.9, p = 0.345
+     snp_real vs linear: mean per-site change -0.00291, 52 up / 80 down, sign test z = -2.4, p = 0.0148

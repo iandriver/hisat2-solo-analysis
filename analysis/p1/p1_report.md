@@ -130,3 +130,79 @@ it carries that site's variant — this predicts:
 
 Recorded before the Yoruba alignment was run, so the interpretation cannot be
 chosen after seeing the number.
+
+## Result for the Yoruba donor
+
+50,000,000 reads (SRR8551676), 564,631 known het sites on chr1/6/17/19, **3,874**
+covered at depth >= 20 in all three arms. Alignment rates 87.87% / 87.76% /
+87.38%, again reproducing H2's recorded 87.87%.
+
+| donor | arm | pooled | dist. from 0.5 | per-site | dist. from 0.5 | bias removed |
+|---|---|---|---|---|---|---|
+| CEU | linear | 0.46245 | 0.0376 | 0.46921 | 0.0308 | — |
+| | `snp_invented` | 0.46442 | 0.0356 | 0.49030 | 0.0097 | 68.5% |
+| | `snp_real` | 0.46556 | 0.0344 | 0.49098 | 0.0090 | **70.7%** |
+| YRI | linear | 0.40127 | 0.0987 | 0.45236 | 0.0476 | — |
+| | `snp_invented` | 0.50254 | 0.0025 | 0.47705 | 0.0229 | 51.8% |
+| | `snp_real` | 0.52915 | 0.0292 | 0.47909 | 0.0209 | **56.1%** |
+
+### The prediction held, at 3x rather than 4x
+
+Real phasing's per-site advantage over invented haplotypes is **+0.00204** for
+the Yoruba donor against **+0.00068** for the European — **3.0x**, against the
+~4x registered before the run. Direction and order of magnitude confirmed.
+
+The mechanism prediction held exactly. At the 507 sites where `grch38_snp` lacks
+the variant, `snp_invented` does nothing (+0.002, p = 0.29) while `snp_real`
+delivers **+0.010, z = 3.7, p = 1.8e-4** — the gain lands precisely where the
+coverage gap said it would.
+
+### Two findings that were not predicted, and matter more
+
+**1. The graph narrows the ancestry gap but does not close it.** Linear bias is
+1.5x worse for the Yoruba donor (0.0476 against 0.0308). After the best graph
+arm the residual is **2.3x worse** (0.0209 against 0.0090), because the graph
+removes only 56% of the bias for the Yoruba donor against 71% for the European.
+**Variant-aware alignment reduces reference bias for everyone and reduces the
+ancestry disparity in it, but a donor from an underrepresented population is
+still left with more than twice the residual bias.** That is the honest headline
+and it is not the flattering one.
+
+**2. Pooled and per-site disagree about which index is better, and pooled says
+`snp_invented`.** For the Yoruba donor `snp_invented` lands at 0.5025 — almost
+exactly unbiased — while `snp_real` overshoots to 0.5292. By "closest to 0.5" on
+the pooled estimator, the distributed index wins.
+
+This is not a small discrepancy and it cannot be waved away. The reason to
+prefer per-site here is that **the top 1% of sites carry 42% of all reads**
+(57% for the European donor), and those are the most highly expressed genes,
+where true allele-specific expression is a real biological signal rather than a
+mapping artifact. A read-mass-weighted statistic therefore measures ASE and
+mapping bias together, which is not the quantity under test. Excluding the top
+1% of sites moves `snp_real` from 0.5292 only to 0.5159, so the overshoot is not
+a handful of loci — it is broad, and it is a real property of the pooled view.
+
+**The conservative reading is that `snp_real` beats `snp_invented` on the
+estimator that isolates mapping bias, and loses on the estimator that does not,
+and that a single donor cannot settle which matters more.**
+
+### A cost, measured
+
+At sites where `snp_real` does *not* carry the variant, it is slightly **worse**
+than linear for the Yoruba donor: −0.0029 per site, 52 up / 80 down, z = −2.4,
+p = 0.015. Carrying 14.9M variants buys recall where the variant is known and
+costs a little precision where it is not. `snp_real` also aligns the fewest
+reads of the three arms in both donors (87.77% and 87.38% against linear's
+88.37% and 87.87%).
+
+## Standing caveats
+
+- **Truth quality differs between the donors.** NA12878 uses GIAB HG001 v4.2.1;
+  NA18502 uses 1000 Genomes panel calls, which carry more genotype error. The
+  diagnostic argues against this driving the overshoot — sites with alt fraction
+  above 0.9 are 2.17% for the Yoruba donor against 1.50% for the European, not
+  the spike a hom-alt miscall would produce — but it is not eliminated.
+- **Both donors are IN the panel our index was built from.** The
+  variant-not-carried rows are the uncircular control and behave correctly.
+- **n = 2 donors.** The ancestry claim rests on one comparison. The 3x ratio and
+  the 2.3x residual gap are point estimates from a single pair, not a cohort.
