@@ -46,10 +46,21 @@ Everything semantic is already reproduced and verified against real indexes:
 and the GFM rows character for character with every F bit correct, on graphs of
 200 bp / 509 kb / 900 kb.
 
-What remains is layout, which rung 2 showed is mechanical once the ordering is
-right: side packing (2 rows/byte with the F and M bitvectors interleaved, 6
-`index_t` of tallies per side), `zOffs`, the graph-mode `ftab`/`eftab`, the
-`.2.ht2` offsets emitted on `M == 1` boundaries, and then `.5`/`.6`.
+What remains is mostly layout — side packing (2 rows/byte with the F and M
+bitvectors interleaved, 6 `index_t` of tallies per side: `F_locSave`,
+`M_occSave`, `occSave[0..3]`), `zOffs`, the `.2.ht2` offsets emitted on `M == 1`
+boundaries, and then `.5`/`.6`.
+
+**Correction to an earlier reading of this step: the graph `ftab` is not
+layout.** Unlike the linear one, which falls out of the suffix-array walk, the
+graph `ftab` is built by *querying the index that was just written* —
+`mapGLF`/`mapGLF1` walk the GFM backwards for all `4^ftabChars` = 1,048,576
+prefixes (`gfm.h:4993`). So step 1 requires working graph-FM search primitives:
+`SideLocus`, occ counting across sides, and the F/M bitvector navigation. That
+is real work and it was understated as "mechanical".
+
+It is also not wasted: those primitives are what any independent validation of a
+graph index needs, and eventually what an aligner needs.
 
 Gate: `.1`–`.6` byte-identical on the chr22-scale graph.
 
@@ -103,8 +114,25 @@ several ways and collapses; a run spanning several `from` values is several node
 at the same rank and all survive* — and it is verified generation-for-generation
 on three graphs, so the streaming rewrite has an exact oracle to test against.
 
-Gate: generation curve identical to the C++ log on chr22, then on chr1, with
-peak RSS held under a declared budget.
+**Status: working at small scale.** `ht2ext` reproduces HISAT2's whole
+generation curve on the 200 bp graph with a **4 KB** sort buffer — small enough
+to force real spill runs and a real k-way merge rather than accidentally fitting
+in RAM.
+
+Two things had to be got right that a naive port misses, and both were caught by
+the curve rather than by reading:
+
+1. **Generation 4 does not use the block walk.** `mergeUpdateRank` has an
+   entirely separate body for that one generation, built on `nextMaximalSet`,
+   which collapses each maximal run sharing a single `from` into its first
+   member. Using the block walk there keeps 248 nodes where HISAT2 keeps 241.
+2. **The block walk's lookahead discards a record outright.** After a multi-node
+   block, the next record is dropped when it is a block of one, the previously
+   written node is sorted, and the two share a `from`. A block-at-a-time rewrite
+   cannot see this, and the counts drift the moment pruning starts.
+
+Gate: generation curve identical on chr22, then chr1, with peak RSS held under a
+declared budget.
 
 ## Step 4 — run it, and diff against the artifact
 
