@@ -33,7 +33,20 @@ pub struct Built {
 /// joined text the graph is built over.
 struct Run { chrom_off: u32, joined_off: u32, len: u32 }
 
-pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
+
+/// Everything read from the input files, before any graph is built. Split out
+/// so the fragmented builder can construct one range at a time from it without
+/// re-reading or re-parsing.
+pub struct Parsed {
+    pub text: Vec<u8>,
+    pub alts: Vec<Alt>,
+    pub haps: Vec<Hap>,
+    pub dropped_snps: usize,
+    pub dropped_haps: usize,
+    pub out_of_order_haps: usize,
+}
+
+pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     let mut text: Vec<u8> = Vec::new();
     let mut runs: HashMap<String, Vec<Run>> = HashMap::new();
     let mut cur = String::new();
@@ -111,20 +124,52 @@ pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
             _ => dropped_haps += 1,
         }
     }
+    Parsed { text, alts, haps, dropped_snps, dropped_haps, out_of_order_haps: 0 }
+}
 
-    let mut nodes: Vec<(u8, u32)> = Vec::with_capacity(len as usize + 2);
-    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(len as usize + 2);
-    nodes.push((b'Y', 0));
-    for i in 0..len {
+/// Build the nodes and edges for reference range `[a, b)` with LOCAL indices:
+/// node 0 is the anchor standing for position `a - 1`, positions `a..b` occupy
+/// `1..=b-a`, and `b - a + 1` is the tail. Mirrors `RefGraph`'s per-fragment
+/// indexing (`j - curr_pos + 2`, `gbwt_graph.h:1092`).
+///
+/// Returns (nodes, edges, count of backbone edges).
+pub fn build_range(p: &Parsed, a: u32, b: u32, first: bool, last: bool)
+    -> (Vec<(u8, u32)>, Vec<(u32, u32)>, usize)
+{
+    let text = &p.text;
+    let alts = &p.alts;
+    let span = (b - a) as usize;
+    let mut nodes: Vec<(u8, u32)> = Vec::with_capacity(span + 2);
+    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(span + 2);
+    // local 0: the real head on the first fragment, else the previous
+    // fragment's last backbone node
+    // The anchor is always labelled 'Y'. reverse_determinize locates the head
+    // by that label, so a fragment without one has no start for its forward
+    // numbering pass. Using 'Y' rather than the real base is safe because cuts
+    // sit at least RELAX bases from any variant, so the anchor has exactly one
+    // successor and no merge can depend on its label — and for fi > 0 the node
+    // is never emitted anyway, the previous fragment owns it.
+    let _ = first;
+    nodes.push((b'Y', a.saturating_sub(1)));
+    for i in a..b {
         nodes.push((b"ACGT"[text[i as usize] as usize], i));
         edges.push((nodes.len() as u32 - 2, nodes.len() as u32 - 1));
     }
-    nodes.push((b'Z', len));
+    // local b-a+1: the real tail on the last fragment, else a stand-in for the
+    // next fragment's first node, which that fragment will own
+    // Both cases push 'Z': on the last fragment it is the real tail, otherwise
+    // it is a stand-in that reverse_determinize can walk back from and that the
+    // stitch drops, since the next fragment owns that position.
+    let _ = last;
+    nodes.push((b'Z', b));
     edges.push((nodes.len() as u32 - 2, nodes.len() as u32 - 1));
     let base_edges = edges.len();
 
+    // haplotypes wholly inside this range, with positions shifted local
+    let off = a;
+    let haps: Vec<&Hap> = p.haps.iter().filter(|h| h.left >= a && h.right < b).collect();
     let mut out_of_order_haps = 0usize;
-    for h in &haps {
+    for h in haps.into_iter() {
         let mut pass = true;
         for w in 0..h.alts.len().saturating_sub(1) {
             let s1 = &alts[h.alts[w] as usize];
@@ -150,15 +195,15 @@ pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
                         ALT_SGL => {
                             nodes.push((b"ACGT"[alt.seq as usize], alt.pos));
                             if prev != Some(ALT_DEL) {
-                                let from = if j == h.left { alt.pos } else { nodes.len() as u32 - 2 };
+                                let from = if j == h.left { alt.pos - off } else { nodes.len() as u32 - 2 };
                                 edges.push((from, nodes.len() as u32 - 1));
                             }
-                            if j == h.right { edges.push((nodes.len() as u32 - 1, alt.pos + 2)); }
+                            if j == h.right { edges.push((nodes.len() as u32 - 1, alt.pos - off + 2)); }
                         }
                         ALT_DEL => {
-                            let from = if j == h.left { alt.pos } else { nodes.len() as u32 - 1 };
+                            let from = if j == h.left { alt.pos - off } else { nodes.len() as u32 - 1 };
                             j += alt.len - 1;
-                            let to = if j == h.right { alt.pos + alt.len + 1 } else { nodes.len() as u32 };
+                            let to = if j == h.right { alt.pos - off + alt.len + 1 } else { nodes.len() as u32 };
                             edges.push((from, to));
                         }
                         _ => {
@@ -166,10 +211,10 @@ pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
                                 let bp = ((alt.seq >> ((alt.len - k - 1) * 2)) & 3) as usize;
                                 nodes.push((b"ACGT"[bp], u32::MAX));
                                 if prev == Some(ALT_DEL) && k == 0 { continue; }
-                                let from = if k == 0 && j == h.left { alt.pos } else { nodes.len() as u32 - 2 };
+                                let from = if k == 0 && j == h.left { alt.pos - off } else { nodes.len() as u32 - 2 };
                                 edges.push((from, nodes.len() as u32 - 1));
                             }
-                            if j == h.right { edges.push((nodes.len() as u32 - 1, alt.pos + 1)); }
+                            if j == h.right { edges.push((nodes.len() as u32 - 1, alt.pos - off + 1)); }
                         }
                     }
                     id_i += 1;
@@ -179,10 +224,10 @@ pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
                 _ => {
                     nodes.push((b"ACGT"[text[j as usize] as usize], j));
                     if prev != Some(ALT_DEL) {
-                        let from = if j == h.left && prev.is_none() { j } else { nodes.len() as u32 - 2 };
+                        let from = if j == h.left && prev.is_none() { j - off } else { nodes.len() as u32 - 2 };
                         edges.push((from, nodes.len() as u32 - 1));
                     }
-                    if j == h.right { edges.push((nodes.len() as u32 - 1, j + 2)); }
+                    if j == h.right { edges.push((nodes.len() as u32 - 1, j - off + 2)); }
                     prev = Some(ALT_SGL);
                 }
             }
@@ -190,22 +235,28 @@ pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
         }
     }
 
+    (nodes, edges, base_edges)
+}
+
+pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
+    let p = parse(fa, snp, hap);
+    let len = p.text.len() as u32;
+    let (nodes, edges, base_edges) = build_range(&p, 0, len, true, true);
     let (pre_nodes, pre_edges) = (nodes.len(), edges.len());
-    // HT2_NO_DET=1 stops before the subset construction, to attribute peak RSS
-    // between building the graph and determinising it. Not a supported mode --
-    // the resulting graph is not reverse-deterministic.
     let (nodes, edges, last_node) = if std::env::var("HT2_NO_DET").is_ok() {
         (nodes, edges, len + 1)
     } else {
         reverse_determinize(&nodes, &edges, len + 1)
     };
     Built {
-        text, nodes, edges, last_node,
-        n_alts: alts.len(), n_haps: haps.len(),
-        dropped_snps, dropped_haps, out_of_order_haps,
+        text: p.text, nodes, edges, last_node,
+        n_alts: p.alts.len(), n_haps: p.haps.len(),
+        dropped_snps: p.dropped_snps, dropped_haps: p.dropped_haps,
+        out_of_order_haps: p.out_of_order_haps,
         pre_edges, base_edges, pre_nodes,
     }
 }
+
 
 /// `RefGraph::reverseDeterminize` (`gbwt_graph.h:1015`).
 ///
@@ -339,9 +390,169 @@ pub fn reverse_determinize(nodes: &[(u8, u32)], edges: &[(u32, u32)], last_node:
         }
     }
     drop(fwd);
-    let out_edges: Vec<(u32, u32)> = cedges.iter()
+    let mut out_edges: Vec<(u32, u32)> = cedges.iter()
         .map(|&(f, t)| (cnodes[f as usize].id, cnodes[t as usize].id)).collect();
+    // `reverseDeterminize` ends with sortEdgesFrom (gbwt_graph.h:2409). The
+    // doubling re-sorts anyway, so the global path never needed it -- but the
+    // fragmented path emits edges per fragment, and without this the two differ
+    // in order while agreeing as multisets.
+    out_edges.sort_unstable();
     (out_nodes, out_edges, last_out)
+}
+
+
+/// Fragment boundaries for step 3.5.
+///
+/// `RefGraph` switches to per-fragment automata at `jlen >= 1 << 16`
+/// (`gbwt_graph.h:383`) and determinises each chunk separately. That is not a
+/// parallelisation detail: it is what bounds the determinisation working set to
+/// one chunk instead of one genome, and reproducing only its output while
+/// ignoring its structure is how an 812 GB projection got into the plan.
+///
+/// Cuts must land where no composite node can span them, so a boundary is
+/// pushed forward until it is at least `RELAX` bases clear of every variant —
+/// the same 128 the C++ uses when computing its alt-free ranges.
+pub const RELAX: u32 = 128;
+
+pub fn fragment_bounds(len: u32, alts: &[Alt], chunk: u32) -> Vec<(u32, u32)> {
+    // positions that must not be cut through, as sorted inclusive ranges
+    let mut bad: Vec<(u32, u32)> = alts.iter().map(|a| {
+        let lo = a.pos.saturating_sub(RELAX + 1);
+        let hi = match a.typ {
+            ALT_DEL => a.pos + a.len + RELAX,
+            _       => a.pos + 1 + RELAX,
+        };
+        (lo, hi.min(len))
+    }).collect();
+    bad.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::with_capacity(bad.len());
+    for r in bad {
+        match merged.last_mut() {
+            Some(l) if r.0 <= l.1 => { if r.1 > l.1 { l.1 = r.1; } }
+            _ => merged.push(r),
+        }
+    }
+    let blocked = |p: u32| -> Option<u32> {
+        let i = merged.partition_point(|&(lo, _)| lo <= p);
+        if i == 0 { return None; }
+        let (lo, hi) = merged[i - 1];
+        if p >= lo && p <= hi { Some(hi + 1) } else { None }
+    };
+
+    let mut out = Vec::new();
+    let mut a = 0u32;
+    while a < len {
+        let mut b = a.saturating_add(chunk).min(len);
+        if b < len {
+            while let Some(next) = blocked(b) {
+                b = next.min(len);
+                if b >= len { break; }
+            }
+        }
+        if b <= a { b = len; }
+        out.push((a, b));
+        a = b;
+    }
+    out
+}
+
+
+/// Step 3.5 — build the graph one fragment at a time.
+///
+/// Each fragment is determinised standalone with everything resident, its nodes
+/// and edges are appended to the running output, and the fragment is dropped.
+/// Peak becomes one chunk instead of one genome.
+///
+/// Two things make the stitch exact. Cuts sit at least `RELAX` bases from every
+/// variant, so the graph is a plain chain there and no composite node can span a
+/// boundary. And the shared boundary node is located by its genomic `value`,
+/// which determinisation preserves and which — in a variant-free stretch — only
+/// the backbone node carries.
+pub fn build_fragmented(fa: &str, snp: &str, hap: &str, chunk: u32) -> Built {
+    let p = parse(fa, snp, hap);
+    let len = p.text.len() as u32;
+    let bounds = fragment_bounds(len, &p.alts, chunk);
+
+    let mut g_nodes: Vec<(u8, u32)> = Vec::new();
+    let mut g_edges: Vec<(u32, u32)> = Vec::new();
+    let mut pre_nodes = 0usize;
+    let mut pre_edges = 0usize;
+    let mut base_edges = 0usize;
+    let mut anchor_global: u32 = u32::MAX; // global id of the node for position a-1
+    let mut pending: Vec<u32> = Vec::new(); // edges into a stand-in tail, awaiting the next fragment
+    let mut last_node_global: u32 = 0;
+
+    for (fi, &(a, b)) in bounds.iter().enumerate() {
+        let first = fi == 0;
+        let last = fi + 1 == bounds.len();
+        let (mut n, mut e, base_e) = build_range(&p, a, b, first, last);
+        pre_nodes += n.len();
+        pre_edges += e.len();
+        base_edges += base_e;
+
+        // tail to walk back from: the real 'Z' on the last fragment, otherwise
+        // the synthetic anchor standing in for the next fragment's first node
+        let tail_local = (b - a + 1) as u32;
+        let (dn, de, dlast) = reverse_determinize(&n, &e, tail_local);
+        n.clear(); e.clear();
+
+        // local -> global. Node 0 of a determinised fragment is its head, which
+        // for fi>0 is the boundary node the previous fragment already emitted.
+        let mut map: Vec<u32> = vec![u32::MAX; dn.len()];
+        let mut emitted_boundary: u32 = u32::MAX;
+        let mut tail_local: Vec<u32> = Vec::new();
+        for (li, &(lab, val)) in dn.iter().enumerate() {
+            if lab == b'Y' {
+                map[li] = if first { let g = g_nodes.len() as u32; g_nodes.push((lab, val)); g }
+                          else { anchor_global };
+                continue;
+            }
+            if lab == b'Z' && !last {
+                tail_local.push(li as u32);   // stand-in; the next fragment owns it
+                continue;
+            }
+            let g = g_nodes.len() as u32;
+            // The first real node of this fragment resolves the previous
+            // fragment's edge into its stand-in tail.
+            if val == a && !pending.is_empty() {
+                for &src in pending.iter() { g_edges.push((src, g)); }
+                pending.clear();
+            }
+            map[li] = g;
+            g_nodes.push((lab, val));
+            if lab == b'Z' { last_node_global = g; }
+            if !last && val == b - 1 { emitted_boundary = g; }
+        }
+        let tail_set: std::collections::HashSet<u32> = tail_local.into_iter().collect();
+        // The anchor's outgoing backbone edge is the SAME edge the previous
+        // fragment handed over as pending -- both run from the boundary node to
+        // this fragment's first base. Emitting the fragment's own copy as well
+        // double-counts it, one edge per boundary.
+        let anchor_local: u32 = dn.iter().position(|&(l, _)| l == b'Y').unwrap_or(usize::MAX) as u32;
+        for &(f, t) in de.iter() {
+            if !first && f == anchor_local { continue; }
+            if tail_set.contains(&t) {
+                // backbone edge into the stand-in tail: hold it until the next
+                // fragment emits the node it really points at
+                if map[f as usize] != u32::MAX { pending.push(map[f as usize]); }
+                continue;
+            }
+            let (gf, gt) = (map[f as usize], map[t as usize]);
+            if gf == u32::MAX || gt == u32::MAX { continue; }
+            g_edges.push((gf, gt));
+        }
+        let _ = dlast;
+        anchor_global = emitted_boundary;
+    }
+
+    g_edges.sort_unstable();
+    Built {
+        text: p.text, nodes: g_nodes, edges: g_edges, last_node: last_node_global,
+        n_alts: p.alts.len(), n_haps: p.haps.len(),
+        dropped_snps: p.dropped_snps, dropped_haps: p.dropped_haps,
+        out_of_order_haps: p.out_of_order_haps,
+        pre_edges, base_edges, pre_nodes,
+    }
 }
 
 /// The post-condition the construction exists to establish
