@@ -70,3 +70,58 @@ graph is small enough to dump both lists in full.
 step 4's whole-genome byte diff is blocked on this one bitvector, not on scale.
 
 Everything else in the file is now reproduced.
+
+
+---
+
+# Resolved — the whole gbwt block, byte for byte
+
+Instrumenting a throwaway `hisat2-build` to dump `nodes` and `edges` at the
+merge-join answered it in one run, after source reading had gone in circles:
+
+```
+@@N 0  from=196     @@E 0  from=196  ranking=4  A
+@@N 1  from=48      @@E 1  from=48   ranking=5  A
+@@N 2  from=17      @@E 2  from=17   ranking=7  A
+@@N 3  from=128     @@E 3  from=128  ranking=9  A
+```
+
+**Edge `i`'s `from` equals node `i`'s `from`.** The two lists arrive positionally
+aligned, which is why a sequential scan is the right algorithm and why reading it
+as a group-by was wrong. The scan pairs them off and advances the node only on a
+mismatch, so a node collects two rows exactly when two edges land on it.
+
+That also exposed the actual defect. `PathEdge(edge->from, nodes[j].key.first,
+label)` stores the **reference edge's** `from`, and we were storing the target
+path node's own `from`. Only the merge-join reads that field, so the BWT rows and
+F bits stayed perfect while every out-degree was attributed to the wrong node —
+an error no aggregate check could see.
+
+A second, independent bug sat behind it. The C++ writes the six per-side tallies
+when a side *fills*, using `occSave`: the counts as they stood when that side
+*opened*. Writing them at the side's start instead — which is where they belong —
+the live counters already hold exactly those values, so carrying `*_save`
+variables across was not merely redundant but **wrong by a full side**. Side 0
+matched (all zero) and every later side did not.
+
+| graph | gbwt block | `fchr` | `zOffs` | `.2.ht2` SA sample |
+|---|---|---|---|---|
+| 200 bp | **256/256** | exact | exact | 15/15 |
+| 509,431 bp | **327,936/327,936** | exact | exact | 33,180/33,180 |
+| 900,000 bp | **589,184/589,184** | exact | exact | 59,615/59,615 |
+
+Every byte of the graph-mode gbwt block, plus `fchr`, `zOffs`, and the complete
+`.2.ht2` offset array — the sample counts now match too, where before ours fell
+short because the M runs were wrong.
+
+## What is left in `.1.ht2`
+
+Only the **graph `ftab`/`eftab`**, which is built by querying the finished index:
+`mapGLF`/`mapGLF1` walking the GFM backward for all 1,048,576 prefixes
+(`gfm.h:4993`). That needs `SideLocus` and occ navigation over the block — and
+the block is now known to be correct, so those primitives can be developed
+against a verified target rather than a hypothesis.
+
+Then the header, `nPat`/`plen`/`nFrag`/`rstarts` and `refnames` — all of which
+rung 2 already emits byte-identically for the linear case and which are
+unchanged here.

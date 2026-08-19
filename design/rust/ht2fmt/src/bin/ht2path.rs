@@ -272,10 +272,15 @@ fn main() {
             _ => panic!("bad label"),
         };
         for j in start[t as usize] as usize..start[t as usize + 1] as usize {
-            buckets[li].push((nodes[j].k0, nodes[j].from));
+            // PathEdge(edge->from, nodes[j].key.first, label) -- the stored
+            // `from` is the REFERENCE edge's source, not the target path node's
+            // own `from`. Only the merge-join reads it, so using the wrong one
+            // leaves the BWT rows correct and the out-degrees wrong.
+            buckets[li].push((nodes[j].k0, f));
         }
     }
-    for bk in buckets.iter_mut() { bk.sort_unstable(); }
+    // radix by ranking, stable within a bucket
+    for bk in buckets.iter_mut() { bk.sort_by_key(|&(r, _)| r); }
     let n_edges: usize = buckets.iter().map(|b| b.len()).sum();
     nodes.sort_by_key(|n| n.k0);
 
@@ -303,18 +308,25 @@ fn main() {
             let lab = b"ACGTYZ"[li];
             for &(rank, from) in bk { ed.push((rank, from, lab)); }
         }
-        // Group edges by `from`, assigning each group to the first path node
-        // (in rank order) carrying that `from`. The C++ writes this as a
-        // sequential merge-join, which only behaves as a group-by if both lists
-        // are `from`-ordered at that point.
+        // The merge-join of gbwt_graph.h:2563, literally. Instrumenting a debug
+        // hisat2-build on this graph shows the two lists arrive positionally
+        // aligned -- edge i's `from` equals node i's `from` -- so the scan pairs
+        // them off, advancing the node only on a mismatch and giving a node two
+        // rows where two edges land on it.
         let mut outdeg = vec![0u32; nodes.len()];
-        for e in ed.iter() { *edge_from_count.entry(e.1).or_insert(0u32) += 1; }
         {
-            let mut first_of: HashMap<u32, u32> = HashMap::new();
-            for (i, nd) in nodes.iter().enumerate() { first_of.entry(nd.from).or_insert(i as u32); }
-            for e in ed.iter_mut() {
-                if let Some(&ni) = first_of.get(&e.1) { e.1 = ni; outdeg[ni as usize] += 1; }
+            let (mut ni, mut ei) = (0usize, 0usize);
+            while ni < nodes.len() && ei < ed.len() {
+                if ed[ei].1 == nodes[ni].from {
+                    ed[ei].1 = ni as u32;
+                    ei += 1;
+                    outdeg[ni] += 1;
+                } else {
+                    ni += 1;
+                    if ni < nodes.len() { outdeg[ni] = 0; }
+                }
             }
+            if ei < ed.len() { println!("  NOTE merge-join consumed {ei} of {} edges", ed.len()); }
         }
         // Drop the second-to-last node, keeping its out-degree on the survivor.
         let n = nodes.len();
@@ -455,9 +467,9 @@ fn main() {
         {
             let gbwt_tot = num_sides * side_sz;
             let mut blk = vec![0u8; gbwt_tot];
-            let (mut occ, mut occ_save) = ([0u32; 4], [0u32; 4]);
-            let (mut m_occ, mut m_occ_save) = (0u32, 0u32);
-            let (mut f_loc, mut f_loc_save) = (0u32, 0u32);
+            let mut occ = [0u32; 4];
+            let mut m_occ = 0u32;
+            let mut f_loc = 0u32;
             let mut z_offs: Vec<u32> = Vec::new();
             let mut fchr_c = [0u32; 4];
             let mut sa_sample: Vec<u32> = Vec::new();
@@ -468,14 +480,15 @@ fn main() {
                 let side = si / rows_per_side;
                 let off = si % rows_per_side;
                 if off == 0 {
-                    // tallies are written at the head of each side from the
-                    // running counts as they stood when the side opened
+                    // The C++ writes these when a side FILLS, using occSave --
+                    // the counts as they stood when that side opened. Writing at
+                    // the side's start instead, the live counters already hold
+                    // exactly those values, so the save variables are not just
+                    // unnecessary here but wrong: they lag by a full side.
                     let base = side * side_sz + side_sz - 24;
-                    for (k, v) in [f_loc_save, m_occ_save, occ_save[0], occ_save[1],
-                                   occ_save[2], occ_save[3]].iter().enumerate() {
+                    for (k, v) in [f_loc, m_occ, occ[0], occ[1], occ[2], occ[3]].iter().enumerate() {
                         blk[base + k * 4..base + k * 4 + 4].copy_from_slice(&v.to_le_bytes());
                     }
-                    f_loc_save = f_loc; m_occ_save = m_occ; occ_save = occ;
                 }
                 let (ch, f, m, pos) = if si < row_out.len() {
                     let c = row_out[si].0;
@@ -545,6 +558,21 @@ fn main() {
                 oruns.push(oc);
                 println!("      ours  runs: {} nodes, {} with length > 1",
                          oruns.len(), oruns.iter().filter(|&&r| r > 1).count());
+            }
+            {
+                let names = ["F_locSave", "M_occSave", "occA", "occC", "occG", "occT"];
+                for side in 0..(gbwt_tot / side_sz).min(3) {
+                    let base = side * side_sz + side_sz - 24;
+                    let o: Vec<u32> = (0..6).map(|k| u32::from_le_bytes(
+                        blk[base + k*4..base + k*4 + 4].try_into().unwrap())).collect();
+                    let t: Vec<u32> = (0..6).map(|k| u32::from_le_bytes(
+                        idx[gbwt_off + base + k*4..gbwt_off + base + k*4 + 4].try_into().unwrap())).collect();
+                    if o != t {
+                        println!("      side {side} tallies differ:");
+                        for k in 0..6 { if o[k] != t[k] {
+                            println!("        {:<10} ours {:>10} theirs {:>10}", names[k], o[k], t[k]); } }
+                    }
+                }
             }
             let theirs_blk = &idx[gbwt_off..gbwt_off + gbwt_tot];
             let ndiff = blk.iter().zip(theirs_blk.iter()).filter(|(a, b)| a != b).count();
