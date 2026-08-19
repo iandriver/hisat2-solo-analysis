@@ -270,14 +270,49 @@ fn main() -> std::io::Result<()> {
     let (fa, snp, hap, wd) = (&a[1], &a[2], &a[3], PathBuf::from(&a[4]));
     let budget: usize = a.get(6).and_then(|x| x.parse().ok()).unwrap_or(4096);
     fs::create_dir_all(&wd)?;
+    let n_ref_nodes: usize;
 
-    let b = graph::build(fa, snp, hap);
+    // HT2_DISK=1 builds the graph fragment by fragment straight to record
+    // files, so nothing about it stays resident, and generation 0 is produced
+    // by streaming those files rather than indexing Vecs. Edges are in
+    // sortEdgesFrom order and nodes are in id order, so the label lookup each
+    // edge needs is a single forward pass, not a random probe.
+    let cur = wd.join("cur.bin");
     let code = |l: u8| -> u64 { match l { b'A' => 0, b'C' => 1, b'G' => 2, b'T' => 3,
                                           b'Y' => 4, _ => 5 } };
-
-    // generation 0: one node per edge, plus the self-loop for the tail
-    let cur = wd.join("cur.bin");
-    {
+    if env::var("HT2_DISK").is_ok() {
+        let chunk: u32 = env::var("HT2_CHUNK").ok().and_then(|x| x.parse().ok()).unwrap_or(1 << 18);
+        let g = graph::build_fragmented_to_disk(fa, snp, hap, chunk, &wd)?;
+        println!("graph on disk: {} nodes, {} edges, chunk {} kb", g.n_nodes, g.n_edges, chunk / 1024);
+        let mut nf = std::io::BufReader::with_capacity(1 << 20, fs::File::open(wd.join("nodes.bin"))?);
+        let mut ef = std::io::BufReader::with_capacity(1 << 20, fs::File::open(wd.join("edges.bin"))?);
+        let mut w = RecWriter::create(&cur)?;
+        let mut nbuf = [0u8; 5];
+        let mut ebuf = [0u8; 8];
+        let mut node_i: u64 = 0;
+        let mut cur_label: u8 = 0;
+        use std::io::Read;
+        loop {
+            match ef.read_exact(&mut ebuf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
+            }
+            let f = u32::from_le_bytes(ebuf[0..4].try_into().unwrap());
+            let t = u32::from_le_bytes(ebuf[4..8].try_into().unwrap());
+            while node_i <= f as u64 {
+                nf.read_exact(&mut nbuf)?;
+                cur_label = nbuf[0];
+                node_i += 1;
+            }
+            w.push(Rec { from: f, to: t, k0: code(cur_label), k1: 0 })?;
+        }
+        w.push(Rec { from: g.last_node, to: g.last_node, k0: 5, k1: 0 })?;
+        w.finish()?;
+        n_ref_nodes = g.n_nodes as usize;
+    } else {
+        let b = graph::build(fa, snp, hap);
+        n_ref_nodes = b.nodes.len();
         let mut w = RecWriter::create(&cur)?;
         for &(f, t) in &b.edges {
             w.push(Rec { from: f, to: t, k0: code(b.nodes[f as usize].0), k1: 0 })?;
@@ -285,6 +320,7 @@ fn main() -> std::io::Result<()> {
         w.push(Rec { from: b.last_node, to: b.last_node, k0: 5, k1: 0 })?;
         w.finish()?;
     }
+
     let n0 = fs::metadata(&cur)?.len() / ext::REC as u64;
     let mut curve: Vec<(u32, u64, u64, u64)> = vec![(0, n0, n0, 0)];
     println!("Generation 0 ({n0} -> {n0} nodes, 0 ranks)   [budget {budget} records = {} KB]",

@@ -555,6 +555,88 @@ pub fn build_fragmented(fa: &str, snp: &str, hap: &str, chunk: u32) -> Built {
     }
 }
 
+
+/// Step 1 — build the graph fragment by fragment and stream it to disk.
+///
+/// Same construction as `build_fragmented`, but nodes and edges are appended to
+/// record files instead of Vecs, so nothing accumulates. What stays resident is
+/// one fragment's working set, the reference text, and the variant tables —
+/// none of which grow with how much of the genome has already been processed.
+///
+/// Writes `nodes.bin` (label `u8` + value `u32`, 5 bytes) and `edges.bin`
+/// (`from`, `to` as `u32`, 8 bytes, in `sortEdgesFrom` order).
+pub struct GraphOnDisk { pub n_nodes: u64, pub n_edges: u64, pub last_node: u32, pub text_len: u32 }
+
+pub fn build_fragmented_to_disk(fa: &str, snp: &str, hap: &str, chunk: u32, dir: &std::path::Path)
+    -> std::io::Result<GraphOnDisk>
+{
+    use std::io::Write;
+    let p = parse(fa, snp, hap);
+    let len = p.text.len() as u32;
+    let bounds = fragment_bounds(len, &p.alts, chunk);
+
+    let mut nw = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(dir.join("nodes.bin"))?);
+    let raw_edges = dir.join("edges.raw");
+    let mut ew = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&raw_edges)?);
+    let (mut n_nodes, mut n_edges) = (0u64, 0u64);
+    let mut anchor_global: u32 = u32::MAX;
+    let mut pending: Vec<u32> = Vec::new();
+    let mut last_node_global: u32 = 0;
+
+    for (fi, &(a, b)) in bounds.iter().enumerate() {
+        let first = fi == 0;
+        let last = fi + 1 == bounds.len();
+        let (n, e, _) = build_range(&p, a, b, first, last);
+        let tail_local = (b - a + 1) as u32;
+        let (dn, de, _) = reverse_determinize(&n, &e, tail_local);
+        drop(n); drop(e);
+
+        let mut map: Vec<u32> = vec![u32::MAX; dn.len()];
+        let mut emitted_boundary: u32 = u32::MAX;
+        let mut tail_local_ids: Vec<u32> = Vec::new();
+        for (li, &(lab, val)) in dn.iter().enumerate() {
+            if lab == b'Y' {
+                if first {
+                    map[li] = n_nodes as u32;
+                    nw.write_all(&[lab])?; nw.write_all(&val.to_le_bytes())?; n_nodes += 1;
+                } else { map[li] = anchor_global; }
+                continue;
+            }
+            if lab == b'Z' && !last { tail_local_ids.push(li as u32); continue; }
+            let g = n_nodes as u32;
+            if val == a && !pending.is_empty() {
+                for &src in pending.iter() {
+                    ew.write_all(&src.to_le_bytes())?; ew.write_all(&g.to_le_bytes())?; n_edges += 1;
+                }
+                pending.clear();
+            }
+            map[li] = g;
+            nw.write_all(&[lab])?; nw.write_all(&val.to_le_bytes())?; n_nodes += 1;
+            if lab == b'Z' { last_node_global = g; }
+            if !last && val == b - 1 { emitted_boundary = g; }
+        }
+        let tail_set: std::collections::HashSet<u32> = tail_local_ids.into_iter().collect();
+        let anchor_local: u32 = dn.iter().position(|&(l, _)| l == b'Y').unwrap_or(usize::MAX) as u32;
+        for &(f, t) in de.iter() {
+            if !first && f == anchor_local { continue; }
+            if tail_set.contains(&t) {
+                if map[f as usize] != u32::MAX { pending.push(map[f as usize]); }
+                continue;
+            }
+            let (gf, gt) = (map[f as usize], map[t as usize]);
+            if gf == u32::MAX || gt == u32::MAX { continue; }
+            ew.write_all(&gf.to_le_bytes())?; ew.write_all(&gt.to_le_bytes())?; n_edges += 1;
+        }
+        anchor_global = emitted_boundary;
+    }
+    nw.flush()?; ew.flush()?; drop(nw); drop(ew);
+
+    // sortEdgesFrom, externally
+    super::ext::sort_pairs_external(&raw_edges, &dir.join("edges.bin"), 1 << 20, dir)?;
+    let _ = std::fs::remove_file(&raw_edges);
+    Ok(GraphOnDisk { n_nodes, n_edges, last_node: last_node_global, text_len: len })
+}
+
 /// The post-condition the construction exists to establish
 /// (`assert(isReverseDeterministic(...))`, `gbwt_graph.h:796`).
 pub fn reverse_deterministic(nodes: &[(u8, u32)], edges: &[(u32, u32)]) -> usize {

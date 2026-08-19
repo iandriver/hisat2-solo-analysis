@@ -142,3 +142,64 @@ place.
 determinise each fragment with everything resident (~90 MB at 88 B/bp), append
 its nodes and edges to record files with a global id offset, and drop it. Peak
 becomes one fragment plus the doubling's sort buffer.
+
+## Item 1: the graph streams to disk, and the memory curve finally bends
+
+`build_fragmented_to_disk` appends each fragment's nodes and edges to record
+files and drops the fragment, so nothing about the graph accumulates.
+`ht2ext`'s `HT2_DISK=1` builds generation 0 by streaming those files — edges are
+in `sortEdgesFrom` order and nodes in id order, so the label each edge needs is a
+single forward pass, not a random probe.
+
+### One trap on the way, worth recording
+
+With the graph on disk, 20 Mb still cost 400 MB and the per-bp figure barely
+moved when the fragment chunk shrank — so it was not the fragment.
+
+**The external sort's merge phase was using memory proportional to `n`.** Every
+run was opened with a 1 MB `BufReader`, and the run count is `n / budget`: at
+20 Mb that is ~305 runs, so **305 MB of merge buffers behind a 1.2 MB sort
+budget.** The sort phase respected its budget; the merge phase silently did not.
+Splitting one buffer budget across the runs fixes it.
+
+| reference | before | after |
+|---|---|---|
+| 509,431 bp | 18.4 MB | 19.8 MB |
+| 900,000 bp | 25.5 MB | 20.7 MB |
+| 20,000,040 bp | **399.6 MB** | **84.6 MB** |
+
+### Where that leaves the whole-genome projection
+
+The curve is now a fixed ~18 MB plus roughly **3.3 bytes/bp**, fitted between the
+900 kb and 20 Mb points. At 3,099,750,718 bp:
+
+| | |
+|---|---|
+| **projected peak RSS** | **~10 GB** |
+| C++ measured peak | 625 GiB |
+| disk, scaled from 2.0 GB at 20 Mb | ~300 GB |
+
+**That is a workstation.** Which was the point.
+
+The remaining ~3.3 bytes/bp is mostly the reference text at 1 byte/bp — 2-bit
+packing would take it to 0.25 — plus the variant tables at ~0.2 bytes/bp at
+whole-genome density. Neither is a wall.
+
+### Everything still exact
+
+Generation curves, GFM rows, F bits, fragmented-equals-global, and the external
+curve, on all three graphs, through every change above.
+
+## Status against the four steps
+
+| step | state |
+|---|---|
+| 1 — graph streamed to disk | **done** |
+| 2 — packed 18-byte node | **done** |
+| 3 — external doubling | **done, verified at three scales** |
+| 3.5 — fragmented determinisation | **done, verified identical to global** |
+| 1' — byte-identical graph emission | still blocked on GFM search primitives for the graph `ftab` |
+| 4 — whole-genome run and byte diff | needs 1' |
+
+The memory work is finished and measured. What stands between here and a
+whole-genome byte diff is `mapGLF` and the side packing, not scale.

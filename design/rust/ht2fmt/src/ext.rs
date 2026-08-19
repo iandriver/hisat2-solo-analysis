@@ -85,7 +85,14 @@ pub struct RecReader { r: BufReader<File>, buf: [u8; REC] }
 
 impl RecReader {
     pub fn open(p: &Path) -> std::io::Result<RecReader> {
-        Ok(RecReader { r: BufReader::with_capacity(1 << 20, File::open(p)?), buf: [0; REC] })
+        Self::open_buf(p, 1 << 20)
+    }
+    /// The k-way merge opens every run at once, so a fixed per-run buffer makes
+    /// merge memory proportional to the RUN COUNT -- that is, to n/budget --
+    /// while the sort phase stays inside its budget. At 20 Mb that was ~305 runs
+    /// at 1 MB each: 305 MB of buffers for a 1.2 MB sort budget.
+    pub fn open_buf(p: &Path, cap: usize) -> std::io::Result<RecReader> {
+        Ok(RecReader { r: BufReader::with_capacity(cap, File::open(p)?), buf: [0; REC] })
     }
     pub fn next(&mut self) -> std::io::Result<Option<Rec>> {
         match self.r.read_exact(&mut self.buf) {
@@ -150,7 +157,10 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path)
     }
     if runs.is_empty() { RecWriter::create(dst)?.finish()?; return Ok(0); }
 
-    let mut rds: Vec<RecReader> = runs.iter().map(|p| RecReader::open(p)).collect::<Result<_,_>>()?;
+    // Split one buffer budget across the runs instead of giving each its own.
+    let cap = ((budget * REC) / runs.len().max(1)).clamp(8 * 1024, 1 << 20);
+    let mut rds: Vec<RecReader> = runs.iter()
+        .map(|p| RecReader::open_buf(p, cap)).collect::<Result<_,_>>()?;
     let mut heap: BinaryHeap<HeapItem> = BinaryHeap::new();
     for (i, rd) in rds.iter_mut().enumerate() {
         if let Some(r) = rd.next()? { heap.push(HeapItem { key: keyof(&r, by), idx: i, rec: r }); }
@@ -163,6 +173,66 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path)
         }
     }
     let n = w.finish()?;
+    for p in runs { let _ = std::fs::remove_file(p); }
+    Ok(n)
+}
+
+/// External sort over 8-byte `(u32, u32)` pairs, for the edge list.
+///
+/// The edge file has to end up in `sortEdgesFrom` order because ties inside a
+/// GFM label bucket resolve by edge order, so this cannot be skipped just
+/// because the doubling re-sorts its own records.
+pub fn sort_pairs_external(src: &Path, dst: &Path, budget: usize, tmp: &Path)
+    -> std::io::Result<u64>
+{
+    let mut runs: Vec<PathBuf> = Vec::new();
+    {
+        let mut f = BufReader::with_capacity(1 << 20, File::open(src)?);
+        let mut b = [0u8; 8];
+        let mut v: Vec<(u32, u32)> = Vec::with_capacity(budget);
+        loop {
+            v.clear();
+            while v.len() < budget {
+                match f.read_exact(&mut b) {
+                    Ok(()) => v.push((u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                                      u32::from_le_bytes(b[4..8].try_into().unwrap()))),
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(e),
+                }
+            }
+            if v.is_empty() { break; }
+            v.sort_unstable();
+            let p = tmp.join(format!("erun{}.bin", runs.len()));
+            let mut w = BufWriter::with_capacity(1 << 20, File::create(&p)?);
+            for &(x, y) in &v { w.write_all(&x.to_le_bytes())?; w.write_all(&y.to_le_bytes())?; }
+            w.flush()?;
+            runs.push(p);
+        }
+    }
+    let ecap = ((budget * 8) / runs.len().max(1)).clamp(8 * 1024, 1 << 18);
+    let mut rds: Vec<BufReader<File>> = runs.iter()
+        .map(|p| File::open(p).map(|f| BufReader::with_capacity(ecap, f)))
+        .collect::<Result<_, _>>()?;
+    let mut heap: BinaryHeap<(std::cmp::Reverse<(u32, u32)>, usize)> = BinaryHeap::new();
+    let mut rd8 = |r: &mut BufReader<File>| -> std::io::Result<Option<(u32, u32)>> {
+        let mut b = [0u8; 8];
+        match r.read_exact(&mut b) {
+            Ok(()) => Ok(Some((u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                               u32::from_le_bytes(b[4..8].try_into().unwrap())))),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(e) => Err(e),
+        }
+    };
+    for i in 0..rds.len() {
+        if let Some(p) = rd8(&mut rds[i])? { heap.push((std::cmp::Reverse(p), i)); }
+    }
+    let mut w = BufWriter::with_capacity(1 << 20, File::create(dst)?);
+    let mut n = 0u64;
+    while let Some((std::cmp::Reverse((x, y)), i)) = heap.pop() {
+        w.write_all(&x.to_le_bytes())?; w.write_all(&y.to_le_bytes())?; n += 1;
+        if let Some(p) = rd8(&mut rds[i])? { heap.push((std::cmp::Reverse(p), i)); }
+    }
+    w.flush()?;
     for p in runs { let _ = std::fs::remove_file(p); }
     Ok(n)
 }

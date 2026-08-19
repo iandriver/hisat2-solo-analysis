@@ -37,6 +37,11 @@
 
 #[path = "../graph.rs"]
 mod graph;
+// graph.rs streams the edge list through ext::sort_pairs_external, so every
+// binary that includes it needs ext in scope too.
+#[allow(dead_code)]
+#[path = "../ext.rs"]
+mod ext;
 
 use std::collections::HashMap;
 use std::convert::TryInto;
