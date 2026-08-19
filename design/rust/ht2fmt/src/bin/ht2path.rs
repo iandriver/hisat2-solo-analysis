@@ -262,6 +262,9 @@ fn main() {
     for i in 1..start.len() { start[i] += start[i - 1]; }
 
     let mut row_out: Vec<(u8, u8)> = Vec::new();
+    let mut m_out: Vec<(u8, u32)> = Vec::new();
+    let mut edge_from_count: HashMap<u32, u32> = HashMap::new();
+    let mut floc_out: Vec<u32> = Vec::new();
     let mut buckets: Vec<Vec<(u32, u32)>> = vec![Vec::new(); 6]; // (ranking, from)
     for &(f, t) in &b.edges {
         let li = match b.nodes[f as usize].0 {
@@ -300,16 +303,18 @@ fn main() {
             let lab = b"ACGTYZ"[li];
             for &(rank, from) in bk { ed.push((rank, from, lab)); }
         }
-        // All edges leaving reference node X attach to the FIRST path node with
-        // that `from`; any later one keeps out-degree 0, which is what the C++
-        // merge-join does when several path nodes share a `from`.
-        let mut first_of: HashMap<u32, u32> = HashMap::new();
-        for (i, nd) in nodes.iter().enumerate() {
-            first_of.entry(nd.from).or_insert(i as u32);
-        }
+        // Group edges by `from`, assigning each group to the first path node
+        // (in rank order) carrying that `from`. The C++ writes this as a
+        // sequential merge-join, which only behaves as a group-by if both lists
+        // are `from`-ordered at that point.
         let mut outdeg = vec![0u32; nodes.len()];
-        for e in ed.iter_mut() {
-            if let Some(&ni) = first_of.get(&e.1) { e.1 = ni; outdeg[ni as usize] += 1; }
+        for e in ed.iter() { *edge_from_count.entry(e.1).or_insert(0u32) += 1; }
+        {
+            let mut first_of: HashMap<u32, u32> = HashMap::new();
+            for (i, nd) in nodes.iter().enumerate() { first_of.entry(nd.from).or_insert(i as u32); }
+            for e in ed.iter_mut() {
+                if let Some(&ni) = first_of.get(&e.1) { e.1 = ni; outdeg[ni as usize] += 1; }
+            }
         }
         // Drop the second-to-last node, keeping its out-degree on the survivor.
         let n = nodes.len();
@@ -326,6 +331,33 @@ fn main() {
         // within a ranking, so ties resolve by label, not by `from`. Sorting by
         // (ranking, from) instead swaps pairs inside a node's edge group.
         ed.sort_by_key(|&(r, _, _)| r);
+
+        // The M bitvector is a SECOND, independent cursor over the same nodes
+        // (gbwt_graph.h:1630): it emits one run per node of length equal to that
+        // node's OUT-degree, with M=1 on the first row of each run, and carries
+        // the node's genomic position. It is not aligned with the F runs, which
+        // are in-degree runs -- both walk the same nodes but at different rates.
+        let mut mpos: Vec<(u8, u32)> = Vec::with_capacity(ed.len());
+        for (i, nd) in nodes.iter().enumerate() {
+            // A node with out-degree 0 still emits ONE row. nextRow sets M
+            // before testing whether to advance (gbwt_graph.h:1632), so the run
+            // length is max(1, outdegree) -- which is exactly what makes the row
+            // count come out at gbwtLen when the dropped node leaves a zero
+            // behind: 241 out-degrees over 240 nodes, 242 rows.
+            let runs = outdeg[i].max(1);
+            for k in 0..runs {
+                mpos.push((if k == 0 { 1 } else { 0 }, nd.to));
+            }
+        }
+        // F_loc for node k is the running sum of in-degrees before it
+        // (nextFLocation, gbwt_graph.h:1640), sampled once per M==1 row.
+        let mut indeg = vec![0u32; nodes.len()];
+        for e in ed.iter() { if (e.0 as usize) < indeg.len() { indeg[e.0 as usize] += 1; } }
+        let mut floc: Vec<u32> = Vec::with_capacity(nodes.len());
+        let mut acc = 0u32;
+        for i in 0..nodes.len() { floc.push(acc); acc += indeg[i]; }
+        m_out = mpos;
+        floc_out = floc;
 
         // rows in nextRow order, with the F bit
         let mut rows: Vec<(u8, u8)> = Vec::with_capacity(ed.len());
@@ -360,9 +392,13 @@ fn main() {
         let side_sz = 1usize << line_rate;
         let side_gbwt_sz = side_sz - 24;
         let gbwt_sz = their_gbwt / 2 + 1;
-        o += ((gbwt_sz + side_gbwt_sz - 1) / side_gbwt_sz) * side_sz;
+        let num_sides = (gbwt_sz + side_gbwt_sz - 1) / side_gbwt_sz;
+        let rows_per_side = side_gbwt_sz * 2;
+        let off_rate = u(28) as u32;
+        o += num_sides * side_sz;
         let n_z = u(o);
         o += 4 + n_z * 4;
+        let (zoff_at, fchr_at) = (o - 4 - n_z * 4, o);
         let fchr: Vec<usize> = (0..5).map(|i| u(o + i * 4)).collect();
         let theirs: Vec<usize> = (0..4).map(|i| fchr[i + 1] - fchr[i]).collect();
         let ours: Vec<usize> = (0..4).map(|i| buckets[i].len()).collect();
@@ -410,7 +446,144 @@ fn main() {
                  match first_bad { Some(r) => format!("; first char mismatch at row {r}"), None => String::new() });
         if cbad != 0 || fbad != 0 { ok = false; }
 
-        println!("  {}", if ok { "GRAPH GFM MATCHES: sizes, label counts, BWT rows and F bits" }
+        // ---- emit the gbwt block and byte-compare it -----------------------
+        // Graph side layout (gfm.h:4886, :4926). Within each side's sideGbwtSz
+        // bytes: [0, sz/2) BWT at 4 rows/byte low-pair-first, [sz/2, 3sz/4) the
+        // F bitvector at 8 rows/byte with F_bpi = bpi + ((sideCur & 1) << 2),
+        // then M the same way. The final 6 index_t are F_locSave, M_occSave and
+        // occSave[0..3] -- the values as of the START of the side, not the end.
+        {
+            let gbwt_tot = num_sides * side_sz;
+            let mut blk = vec![0u8; gbwt_tot];
+            let (mut occ, mut occ_save) = ([0u32; 4], [0u32; 4]);
+            let (mut m_occ, mut m_occ_save) = (0u32, 0u32);
+            let (mut f_loc, mut f_loc_save) = (0u32, 0u32);
+            let mut z_offs: Vec<u32> = Vec::new();
+            let mut fchr_c = [0u32; 4];
+            let mut sa_sample: Vec<u32> = Vec::new();
+            let off_mask: u32 = u32::MAX << off_rate;
+            let mut floc_i = 0usize;
+
+            for si in 0..gbwt_tot / side_sz * rows_per_side {
+                let side = si / rows_per_side;
+                let off = si % rows_per_side;
+                if off == 0 {
+                    // tallies are written at the head of each side from the
+                    // running counts as they stood when the side opened
+                    let base = side * side_sz + side_sz - 24;
+                    for (k, v) in [f_loc_save, m_occ_save, occ_save[0], occ_save[1],
+                                   occ_save[2], occ_save[3]].iter().enumerate() {
+                        blk[base + k * 4..base + k * 4 + 4].copy_from_slice(&v.to_le_bytes());
+                    }
+                    f_loc_save = f_loc; m_occ_save = m_occ; occ_save = occ;
+                }
+                let (ch, f, m, pos) = if si < row_out.len() {
+                    let c = row_out[si].0;
+                    let (m, p) = if si < m_out.len() { m_out[si] } else { (0, 0) };
+                    (c, row_out[si].1, m, p)
+                } else {
+                    (b'A', 0, 0, 0)   // padding past the end, counted as 'A'
+                };
+                let mut count = true;
+                let code = match ch {
+                    b'A' => 0u8, b'C' => 1, b'G' => 2, b'T' => 3,
+                    _ => { count = false; z_offs.push(si as u32); 0 }  // 'Z' is not representable
+                };
+                if si < row_out.len() && count { fchr_c[code as usize] += 1; }
+                if m == 1 {
+                    if floc_i < floc_out.len() { f_loc = floc_out[floc_i]; floc_i += 1; }
+                    if (m_occ & off_mask) == m_occ { sa_sample.push(pos); }
+                }
+                if count { occ[code as usize] += 1; }
+                if m == 1 { m_occ += 1; }
+
+                let base = side * side_sz;
+                let sc = off >> 2;
+                let bpi = off & 3;
+                blk[base + sc] |= code << (bpi * 2);
+                let f_sc = (side_gbwt_sz + sc) >> 1;
+                let f_bpi = bpi + ((sc & 1) << 2);
+                blk[base + f_sc] |= f << f_bpi;
+                let m_sc = f_sc + (side_gbwt_sz >> 2);
+                blk[base + m_sc] |= m << f_bpi;
+            }
+
+            // The M bitvector is the one piece still open. Total M=1 rows match
+            // (one per node), but the RUN LENGTHS do not: HISAT2 gives 238 nodes
+            // a run of 1 and exactly two a run of 2, with no zeros, while
+            // grouping edges by `from` produces zeros and twos in other places.
+            // So out-degree is credited to a specific path node, not shared
+            // across the nodes that happen to have the same `from` -- and the
+            // merge-join at gbwt_graph.h:2561 cannot be read as a group-by,
+            // since replaying it literally on label-ordered edges stalls after
+            // exactly one bucket (81 of 242 edges).
+            if std::env::var("HT2_MDBG").is_ok() {
+                let getm = |r: usize| -> u8 {
+                    let side = r / rows_per_side; let off = r % rows_per_side;
+                    let sc = off >> 2; let bpi = off & 3;
+                    let f_sc = (side_gbwt_sz + sc) >> 1;
+                    let m_sc = f_sc + (side_gbwt_sz >> 2);
+                    (idx[gbwt_off + side * side_sz + m_sc] >> (bpi + ((sc & 1) << 2))) & 1
+                };
+                let mut runs: Vec<usize> = Vec::new();
+                let mut cur = 0usize;
+                for i in 0..row_out.len() {
+                    if getm(i) == 1 { if i > 0 { runs.push(cur); } cur = 0; }
+                    cur += 1;
+                }
+                runs.push(cur);
+                println!("      their runs: {} nodes, {} with length > 1 {:?}",
+                         runs.len(), runs.iter().filter(|&&r| r > 1).count(),
+                         runs.iter().enumerate().filter(|(_, &r)| r > 1)
+                             .map(|(i, r)| (i, *r)).take(6).collect::<Vec<_>>());
+                let mut oruns: Vec<usize> = Vec::new();
+                let mut oc = 0usize;
+                for i in 0..m_out.len() {
+                    if m_out[i].0 == 1 { if i > 0 { oruns.push(oc); } oc = 0; }
+                    oc += 1;
+                }
+                oruns.push(oc);
+                println!("      ours  runs: {} nodes, {} with length > 1",
+                         oruns.len(), oruns.iter().filter(|&&r| r > 1).count());
+            }
+            let theirs_blk = &idx[gbwt_off..gbwt_off + gbwt_tot];
+            let ndiff = blk.iter().zip(theirs_blk.iter()).filter(|(a, b)| a != b).count();
+            let firstd = blk.iter().zip(theirs_blk.iter()).position(|(a, b)| a != b);
+            println!("  gbwt block: {}/{} bytes match{}", gbwt_tot - ndiff, gbwt_tot,
+                     match firstd { Some(o) => format!("; first differing byte at {o} (side {}, offset {})",
+                                                       o / side_sz, o % side_sz), None => String::new() });
+            if ndiff != 0 { ok = false; }
+
+            // fchr and zOffs, from the same walk
+            let mut fchr = [0u32; 5];
+            for i in 0..4 { fchr[i + 1] = fchr[i] + fchr_c[i]; }
+            let their_fchr: Vec<u32> = (0..5).map(|i| u(fchr_at + i * 4) as u32).collect();
+            let fok = (0..5).all(|i| fchr[i] == their_fchr[i]);
+            println!("  fchr: ours {:?} theirs {:?} -> {}", fchr, their_fchr,
+                     if fok { "match" } else { "DIFFER" });
+            if !fok { ok = false; }
+            let their_nz = u(zoff_at) ;
+            let their_z: Vec<u32> = (0..their_nz).map(|i| u(zoff_at + 4 + i * 4) as u32).collect();
+            let zok = z_offs == their_z;
+            println!("  zOffs: ours {:?} theirs {:?} -> {}", z_offs, their_z,
+                     if zok { "match" } else { "DIFFER" });
+            if !zok { ok = false; }
+
+            // .2.ht2 -- the SA sample, one position per 2^offRate M-marked rows
+            if let Ok(sabuf) = fs::read(a[5].replace(".1.ht2", ".2.ht2")) {
+                let n = (sabuf.len() - 4) / 4;
+                let mut sbad = 0usize;
+                for k in 0..n.min(sa_sample.len()) {
+                    let t = u32::from_le_bytes(sabuf[4 + k * 4..8 + k * 4].try_into().unwrap());
+                    if t != sa_sample[k] { sbad += 1; }
+                }
+                println!("  .2.ht2 SA sample: {}/{} match (ours {} entries, theirs {})",
+                         n.min(sa_sample.len()) - sbad, n.min(sa_sample.len()), sa_sample.len(), n);
+                if sbad != 0 || sa_sample.len() != n { ok = false; }
+            }
+        }
+
+        println!("  {}", if ok { "GRAPH GFM MATCHES: sizes, label counts, BWT rows, F bits, gbwt block, fchr, zOffs, SA sample" }
                          else { "GRAPH GFM DIFFERS" });
         if !ok { std::process::exit(1); }
     }
