@@ -611,6 +611,125 @@ fn main() {
             }
         }
 
+        // ---- graph ftab / eftab ---------------------------------------
+        // Unlike the linear ftab, which falls out of the suffix-array walk,
+        // the graph ftab is built by QUERYING the finished index: for each of
+        // the 4^ftabChars prefixes, walk the GFM backward and record the row
+        // range (gfm.h:4993). mapGLF is an LF step over the BWT followed by a
+        // hop through the node structure -- rank over M to find which node the
+        // row belongs to, then select over F to find where that node's incoming
+        // edges begin.
+        {
+            let their_nz = u(zoff_at);
+            let ftab_chars = u(32);
+            let ftab_len = (1usize << (ftab_chars * 2)) + 1;
+            let gl = their_gbwt;                       // gbwtLen
+            let mut bwt = vec![0u8; gl];
+            let mut fb = vec![0u8; gl];
+            let mut mb = vec![0u8; gl];
+            for r in 0..gl {
+                let side = r / rows_per_side; let off = r % rows_per_side;
+                let base = gbwt_off + side * side_sz;
+                let sc = off >> 2; let bpi = off & 3;
+                bwt[r] = (idx[base + sc] >> (bpi * 2)) & 3;
+                let f_sc = (side_gbwt_sz + sc) >> 1;
+                let f_bpi = bpi + ((sc & 1) << 2);
+                fb[r] = (idx[base + f_sc] >> f_bpi) & 1;
+                mb[r] = (idx[base + f_sc + (side_gbwt_sz >> 2)] >> f_bpi) & 1;
+            }
+            // occ excludes the 'Z' row: it is stored as 'A' but was never counted
+            let zset: std::collections::HashSet<usize> =
+                (0..their_nz).map(|i| u(zoff_at + 4 + i * 4)).collect();
+            let mut occ = vec![[0u32; 4]; gl + 1];
+            let mut rankm = vec![0u32; gl + 1];
+            let mut self_f: Vec<u32> = Vec::new();
+            for r in 0..gl {
+                occ[r + 1] = occ[r];
+                if !zset.contains(&r) { occ[r + 1][bwt[r] as usize] += 1; }
+                rankm[r + 1] = rankm[r] + mb[r] as u32;
+                if fb[r] == 1 { self_f.push(r as u32); }
+            }
+            let fchr_v: Vec<u32> = (0..5).map(|i| u(fchr_at + i * 4) as u32).collect();
+            let map_lf = |row: usize, c: usize| -> u32 { fchr_v[c] + occ[row][c] };
+            // rankm[k] is the number of M bits in rows [0, k) -- exclusive,
+            // which is what rank_M(initFromRow_bit(x)) computes. Row r belongs
+            // to node rankm[r+1] - 1.
+            let rank_m = |k: usize| -> u32 { rankm[k.min(gl)] };
+            let sel_f = |k: u32| -> u32 { *self_f.get(k as usize - 1).unwrap_or(&(gl as u32)) };
+
+            let mut tftab: Vec<(u32, u32)> = Vec::with_capacity(ftab_len - 1);
+            for i in 0..ftab_len - 1 {
+                let mut q = i;
+                let (mut top, mut bot) = (0u32, gl as u32);
+                let mut j = 0usize;
+                while j < ftab_chars {
+                    let c = q & 3; q >>= 2;
+                    let nt = map_lf(top as usize, c);
+                    let nb = map_lf(bot as usize, c);
+                    if nt >= nb { top = nt; bot = nb; break; }
+                    let node_top = rank_m((nt + 1) as usize) - 1;
+                    let node_bot = rank_m(nb as usize);
+                    top = sel_f(node_top + 1);
+                    bot = sel_f(node_bot + 1);
+                    if top >= bot { break; }
+                    j += 1;
+                }
+                if top >= bot || j < ftab_chars {
+                    let v = if i == 0 { 0 } else { tftab[i - 1].1 };
+                    tftab.push((v, v));
+                } else {
+                    tftab.push((top, bot));
+                }
+            }
+            // finalise: ftab[i+1] = tFtab[i].second, with a gap pushed to eftab
+            let mut ftab_o = vec![0u32; ftab_len];
+            let mut eftab_o: Vec<u32> = Vec::new();
+            ftab_o[0] = tftab[0].0; ftab_o[1] = tftab[0].1;
+            for i in 1..ftab_len - 1 {
+                if ftab_o[i] != tftab[i].0 {
+                    let (lo, hi) = (ftab_o[i], tftab[i].0);
+                    ftab_o[i] = (eftab_o.len() as u32 / 2) ^ u32::MAX;
+                    eftab_o.push(lo); eftab_o.push(hi);
+                }
+                ftab_o[i + 1] = tftab[i].1;
+            }
+            let their_eftab_len = u(36);
+            // ftab starts right after fchr[5]
+            let ftab_at = fchr_at + 20;
+            let eftab_at = ftab_at + ftab_len * 4;
+            if std::env::var("HT2_FDBG").is_ok() {
+                // decode their ftab into ranges: ftab[i] is the start of prefix
+                // i's range (= end of prefix i-1's), with a gap pushed to eftab
+                let raw = |i: usize| -> u32 { u(ftab_at + i * 4) as u32 };
+                let lo_of = |i: usize| -> u32 {
+                    let v = raw(i);
+                    if v as usize <= gl { v } else { u(eftab_at + ((v ^ u32::MAX) as usize) * 8) as u32 }
+                };
+                let hi_of = |i: usize| -> u32 {
+                    let v = raw(i);
+                    if v as usize <= gl { v } else { u(eftab_at + ((v ^ u32::MAX) as usize) * 8 + 4) as u32 }
+                };
+                let mut shown = 0;
+                for i in 0..ftab_len - 1 {
+                    let theirs = (hi_of(i), lo_of(i + 1));
+                    if theirs.0 != theirs.1 || shown < 4 {
+                        if shown < 14 {
+                            println!("      prefix {i}: ours {:?} theirs {:?}", tftab[i], theirs);
+                            shown += 1;
+                        } else { break; }
+                    }
+                }
+            }
+            let fbad = (0..ftab_len).filter(|&i| ftab_o[i] != u(ftab_at + i * 4) as u32).count();
+            println!("  ftab: {}/{} entries match", ftab_len - fbad, ftab_len);
+            let ebad = (0..their_eftab_len.min(eftab_o.len()))
+                .filter(|&i| eftab_o[i] != u(eftab_at + i * 4) as u32).count();
+            println!("  eftab: {}/{} match (ours {} entries, theirs {})",
+                     their_eftab_len.min(eftab_o.len()) - ebad,
+                     their_eftab_len.min(eftab_o.len()), eftab_o.len(), their_eftab_len);
+            if fbad != 0 || ebad != 0 || eftab_o.len() != their_eftab_len { ok = false; }
+        }
+
         println!("  {}", if ok { "GRAPH GFM MATCHES: sizes, label counts, BWT rows, F bits, gbwt block, fchr, zOffs, SA sample" }
                          else { "GRAPH GFM DIFFERS" });
         if !ok { std::process::exit(1); }

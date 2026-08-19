@@ -125,3 +125,63 @@ against a verified target rather than a hypothesis.
 Then the header, `nPat`/`plen`/`nFrag`/`rstarts` and `refnames` — all of which
 rung 2 already emits byte-identically for the linear case and which are
 unchanged here.
+
+
+---
+
+# The graph `ftab`/`eftab` — exact
+
+| graph | gbwt block | `ftab` | `eftab` |
+|---|---|---|---|
+| 200 bp | 256/256 | **1,048,577/1,048,577** | **40/40** |
+| 509,431 bp | 327,936/327,936 | **1,048,577/1,048,577** | **1,110/1,110** |
+| 900,000 bp | 589,184/589,184 | **1,048,577/1,048,577** | **1,238/1,238** |
+
+Unlike the linear `ftab`, which falls out of the suffix-array walk, the graph one
+is built by **querying the finished index**: for each of the 1,048,576 prefixes,
+walk the GFM backward and record the row range (`gfm.h:4993`). Which is why it
+could only be attempted once the block itself was known correct.
+
+`mapGLF` does not need `SideLocus`'s bit machinery to be reproduced, only its
+semantics. It is an LF step over the BWT followed by a hop through the node
+structure:
+
+```
+top = fchr[c] + occ_c(top)            bot = fchr[c] + occ_c(bot)
+node_top = rank_M(top + 1) - 1        node_bot = rank_M(bot)
+top = select_F(node_top + 1)          bot = select_F(node_bot + 1)
+```
+
+`F` marks where each node's incoming edges begin, so `select_F` converts a node
+index back into a row; `M` marks where each node's rows begin, so `rank_M` does
+the reverse. The C++ reaches the same values through per-side `F_locSave` and
+`M_occSave` tallies and a backward walk over sides, which is the streaming form
+of exactly this.
+
+Two details decided it:
+
+- **`occ` must exclude the `'Z'` row.** It is stored as `'A'` but was never
+  counted when the block was written, so counting the stored bytes naively
+  shifts every LF step after it.
+- **`rank_M` is exclusive.** `rank_M(initFromRow_bit(x))` counts M bits in
+  `[0, x)`, so `node_top = rank_M(top + 1) - 1` needs the exclusive prefix sum.
+  Using an inclusive one left the search finding empty ranges almost everywhere
+  — 8,242 of 1,048,577 entries matching, and the ones that did match were the
+  degenerate propagated entries rather than real hits.
+
+The diagnostic that made this quick was decoding *their* `ftab` back into ranges
+and printing them beside ours. Theirs were width-1 and consecutive — 1-2, 2-3,
+3-4 — which is what an F-column partition looks like; ours were empty. That said
+"the search is failing", not "the search is subtly off", and pointed straight at
+the rank rather than at the LF step.
+
+## `.1.ht2` is now fully reproduced
+
+Header, front end and `refnames` are unchanged from the linear case that rung 2
+already emits byte-identically. Every graph-specific section — the gbwt block
+with its F and M bitvectors and per-side tallies, `zOffs`, `fchr`, `ftab`,
+`eftab` — now matches exactly, as does the whole `.2.ht2` offset array.
+
+What remains for a complete graph index is `.5`/`.6`, the hierarchical local
+indexes, which are themselves graph FM indexes over ~57 kb windows and so reuse
+everything above.
