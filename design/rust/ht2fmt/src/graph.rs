@@ -191,7 +191,14 @@ pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
     }
 
     let (pre_nodes, pre_edges) = (nodes.len(), edges.len());
-    let (nodes, edges, last_node) = reverse_determinize(&nodes, &edges, len + 1);
+    // HT2_NO_DET=1 stops before the subset construction, to attribute peak RSS
+    // between building the graph and determinising it. Not a supported mode --
+    // the resulting graph is not reverse-deterministic.
+    let (nodes, edges, last_node) = if std::env::var("HT2_NO_DET").is_ok() {
+        (nodes, edges, len + 1)
+    } else {
+        reverse_determinize(&nodes, &edges, len + 1)
+    };
     Built {
         text, nodes, edges, last_node,
         n_alts: alts.len(), n_haps: haps.len(),
@@ -222,15 +229,28 @@ pub fn reverse_determinize(nodes: &[(u8, u32)], edges: &[(u32, u32)], last_node:
         for &(t, f) in &by_to[i..] { if t != n { break; } out.push(f); }
     };
 
-    struct CNode { label: u8, value: u32, members: Vec<u32>, id: u32 }
-    let mut cnodes: Vec<CNode> = vec![CNode {
+    // Member lists live in one arena rather than a Vec per composite node.
+    // Measured on a 900 kb graph, determinisation merged 268 nodes out of
+    // 903,755 -- 99.97% of composite nodes carry exactly one member, so a
+    // per-node heap allocation plus a hash entry was spending ~100 bytes to
+    // hold a single u32.
+    struct CNode { label: u8, value: u32, mstart: u32, mlen: u32, id: u32 }
+    let mut arena: Vec<u32> = Vec::with_capacity(nodes.len() + 16);
+    let mut cnodes: Vec<CNode> = Vec::with_capacity(nodes.len());
+
+    // Singletons resolve through a flat table indexed by node id; only genuine
+    // multi-member sets reach the map.
+    let mut single: Vec<u32> = vec![u32::MAX; nodes.len()];
+    let mut multi: HashMap<Box<[u32]>, u32> = HashMap::new();
+
+    arena.push(last_node);
+    cnodes.push(CNode {
         label: nodes[last_node as usize].0,
         value: nodes[last_node as usize].1,
-        members: vec![last_node],
-        id: 0,
-    }];
-    let mut cnode_map: HashMap<Vec<u32>, u32> = HashMap::new();
-    cnode_map.insert(vec![last_node], 0);
+        mstart: 0, mlen: 1, id: 0,
+    });
+    single[last_node as usize] = 0;
+
     let mut active: VecDeque<u32> = VecDeque::from(vec![0]);
     let mut cedges: Vec<(u32, u32)> = Vec::new();
     let mut first_node = 0u32;
@@ -238,14 +258,15 @@ pub fn reverse_determinize(nodes: &[(u8, u32)], edges: &[(u32, u32)], last_node:
 
     while let Some(cid) = active.pop_front() {
         preds.clear();
-        for k in 0..cnodes[cid as usize].members.len() {
-            let m = cnodes[cid as usize].members[k];
+        let (ms, ml) = (cnodes[cid as usize].mstart as usize, cnodes[cid as usize].mlen as usize);
+        for k in 0..ml {
+            let m = arena[ms + k];
             preds_of(m, &mut preds);
         }
         if preds.len() >= 2 {
             preds.sort_unstable();
             preds.dedup();
-            // stable, so members stay in increasing id order — the member list
+            // stable, so members stay in increasing id order -- the member list
             // is the map key, so its order has to be fixed
             preds.sort_by_key(|&n| nodes[n as usize].0);
         }
@@ -253,28 +274,44 @@ pub fn reverse_determinize(nodes: &[(u8, u32)], edges: &[(u32, u32)], last_node:
         while i < preds.len() {
             let n0 = preds[i];
             let (label, mut value) = nodes[n0 as usize];
-            let mut members = vec![n0];
+            let mstart = arena.len() as u32;
+            arena.push(n0);
             i += 1;
             if label == b'Y' && first_node == 0 { first_node = cnodes.len() as u32; }
             while i < preds.len() {
                 let n = preds[i];
                 let (l, v) = nodes[n as usize];
                 if l != label { break; }
-                members.push(n);
+                arena.push(n);
                 if v != u32::MAX {
                     value = if value == u32::MAX { v } else { value.max(v) };
                 }
                 i += 1;
             }
-            match cnode_map.get(&members) {
+            let mlen = arena.len() as u32 - mstart;
+
+            let existing = if mlen == 1 {
+                let e = single[n0 as usize];
+                if e == u32::MAX { None } else { Some(e) }
+            } else {
+                multi.get(&arena[mstart as usize..]).copied()
+            };
+            match existing {
                 None => {
                     let new_id = cnodes.len() as u32;
-                    cnode_map.insert(members.clone(), new_id);
-                    cnodes.push(CNode { label, value, members, id: 0 });
+                    if mlen == 1 {
+                        single[n0 as usize] = new_id;
+                    } else {
+                        multi.insert(arena[mstart as usize..].into(), new_id);
+                    }
+                    cnodes.push(CNode { label, value, mstart, mlen, id: 0 });
                     active.push_back(new_id);
                     cedges.push((new_id, cid));
                 }
-                Some(&existing) => cedges.push((existing, cid)),
+                Some(e) => {
+                    arena.truncate(mstart as usize); // candidate not kept
+                    cedges.push((e, cid));
+                }
             }
             cnodes[cid as usize].id += 1; // in-degree, consumed by the ordering pass
         }
@@ -301,6 +338,7 @@ pub fn reverse_determinize(nodes: &[(u8, u32)], edges: &[(u32, u32)], last_node:
             i += 1;
         }
     }
+    drop(fwd);
     let out_edges: Vec<(u32, u32)> = cedges.iter()
         .map(|&(f, t)| (cnodes[f as usize].id, cnodes[t as usize].id)).collect();
     (out_nodes, out_edges, last_out)

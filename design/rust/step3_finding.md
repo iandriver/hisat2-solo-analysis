@@ -100,3 +100,45 @@ reachable.
 The plan said step 3 was the only research risk. It was the only risk *in the
 doubling*; measuring it honestly surfaced a second one that the earlier
 count-level agreement had hidden.
+
+
+## Item 3 done: the determiniser's bookkeeping, and where the peak really sits
+
+`reverse_determinize` now keeps member lists in one arena instead of a `Vec` per
+composite node, and resolves the 99.97% singleton case through a flat table
+indexed by node id instead of hashing a `Vec`. All correctness held — generation
+curves, GFM rows and F bits still exact on all three graphs, external curve still
+exact.
+
+| reference | before | after |
+|---|---|---|
+| 509,431 bp | 279 B/bp | **106 B/bp** |
+| 900,000 bp | 221 B/bp | **92 B/bp** |
+| 20,000,040 bp | 262 B/bp | **88 B/bp** |
+
+Whole-genome projection: **812 GB -> 272 GB**. Real, and not enough.
+
+### The attribution that reorders the remaining work
+
+Splitting the 20 Mb peak with `HT2_NO_DET=1`:
+
+| | peak | bytes/bp |
+|---|---|---|
+| graph construction only | 827 MB | **43.4** |
+| plus determinisation | 1,671 MB | **87.6** |
+
+Almost exactly half each: ~135 GB for the graph arrays at whole-genome scale and
+~137 GB for the determiniser. **Neither item alone reaches a workstation, and
+they are not independent.**
+
+The plan had item 1 (stream the graph to disk) before item 3.5 (fragment the
+determiniser). That ordering does not work: `reverse_determinize` needs random
+access to the node labels and to the predecessor index, so the graph cannot be
+streamed out from under it. Fragmentation is the precondition for streaming, not
+a later optimisation — which is precisely why `RefGraph` fragments in the first
+place.
+
+**So items 1 and 3.5 are one job**: split at ~1 Mb on variant-free boundaries,
+determinise each fragment with everything resident (~90 MB at 88 B/bp), append
+its nodes and edges to record files with a global id offset, and drop it. Peak
+becomes one fragment plus the doubling's sort buffer.
