@@ -89,7 +89,7 @@ fn main() {
         p += ftab_len * 2;
         p += eftab_len * 2;
         p6 += offs_len * 2;
-        if i < 3 {
+        if i < 64 {
             println!("  local {i}: tidx {_tidx} localOff {_loff} joinedOff {_joff} len {len} \
 gbwtLen {gl} numNodes {nn} eftabLen {eftab_len} nPat {n_pat} nFrag {n_frag} numZOffs {n_z} \
 sides {num_sides} offsLen {offs_len} {}", if linear { "linear" } else { "graph" });

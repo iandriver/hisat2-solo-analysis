@@ -117,8 +117,12 @@ fn merge_update_rank(nodes: &mut Vec<PN>, generation: u32) -> u32 {
 
 /// Full pipeline: prefix doubling to convergence, `generateEdges`, then the row
 /// order `nextRow` produces.
+/// `max_nodes` reproduces `PathGraph`'s `ExplosionException`: `lateGeneration`
+/// throws when `ranks >= max_num_nodes` (`gbwt_graph.h:2004`), which for a local
+/// index is `local_max_gbwt` = 63,488. Returns `None` in that case so the caller
+/// can drop variants and retry, exactly as `hgfm.h:1954` does.
 pub fn build_gfm(gnodes: &[(u8, u32)], gedges: &[(u32, u32)], last_node: u32,
-                 text_len: u32, off_rate: u32) -> BuiltGfm
+                 text_len: u32, off_rate: u32, max_nodes: u32) -> Option<BuiltGfm>
 {
     let n_ref_nodes = gnodes.len();
     let code = |l: u8| -> u32 { match l { b'A' => 0, b'C' => 1, b'G' => 2, b'T' => 3,
@@ -156,6 +160,8 @@ pub fn build_gfm(gnodes: &[(u8, u32)], gedges: &[(u32, u32)], last_node: u32,
             if generation == 4 { nodes.sort_by_key(|n| (n.k0, n.k1)); }
             merge_update_rank(&mut nodes, generation)
         };
+        // the throw is in lateGeneration, so it applies from generation 5 on
+        if generation > 4 && ranks >= max_nodes { return None; }
         if generation > 3 && ranks as usize == nodes.len() { break; }
         if generation > 64 { panic!("doubling did not converge"); }
     }
@@ -236,10 +242,10 @@ pub fn build_gfm(gnodes: &[(u8, u32)], gedges: &[(u32, u32)], last_node: u32,
     let mut fchr = [0u32; 5];
     for i in 0..4 { fchr[i + 1] = fchr[i] + fchr_c[i]; }
 
-    BuiltGfm {
+    Some(BuiltGfm {
         len: text_len,
         gbwt_len: rows.len() as u32,
         num_nodes: nodes.len() as u32,
         rows, mrun, fchr, z_offs, sa_sample,
-    }
+    })
 }

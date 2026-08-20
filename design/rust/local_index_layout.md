@@ -102,7 +102,7 @@ exactly this count (`hgfm.h:2172`). So a window can span or even fall entirely
 inside an N run, which is what the `len == 0` early return in
 `LocalGFM::readIntoMemory` exists for.
 
-**2. Our per-window graph is slightly too large.** On the no-N reference, where
+**2. (superseded — see below.)** Our per-window graph is slightly too large. On the no-N reference, where
 the window count is right, the first difference is at byte 42 — `gbwtLen` of the
 first local index. Totals: ours ~527,300 GBWT rows against 525,146, roughly 200
 extra per window against ~190 variants per window, so on the order of one extra
@@ -114,3 +114,54 @@ only one of the two windows rather than both.
 
 Both are bookkeeping in the windowing, not the index format: every byte of a
 correctly-scoped window already emits exactly.
+
+
+---
+
+# Bug 2 was not what it looked like: local graphs explode and lose variants
+
+The "our graph is slightly too large" reading was wrong. The real mechanism:
+
+**A local graph whose `ranks` reaches `local_max_gbwt` (63,488) is thrown away
+and rebuilt from a thinned variant set.** `PathGraph` raises
+`ExplosionException` (`gbwt_graph.h:2004`), and `hgfm.h:1954` then
+binary-searches for the largest variant count that fits, calling `selectAlts` to
+keep `k` variants **evenly spaced** through the list — `orig[(i*n)/k]` — and
+rebuilding **one single-variant haplotype per kept variant**, discarding the
+original multi-variant phasing for that window.
+
+The build logs say it plainly, and explain why one window matched and ten did
+not:
+
+```
+tiny.log   0 explosions      <- and .5/.6 were byte-identical
+clean.log 13 explosions      <- 10 windows, several retried
+ex.log    26 explosions
+```
+
+So a local index is not simply "the global construction over 57,344 bp". Where
+the variant density is high enough, it is a **deliberately degraded** graph, and
+which variants survive is decided by a binary search whose result depends on the
+explosion threshold. That is a real semantic difference between the global and
+local indexes, and it is invisible from the format alone.
+
+The retry, the threshold and `selectAlts` are now implemented. What is still
+wrong is the *starting* variant set: our first attempt on window 0 reaches
+59,769 ranks and does **not** explode, where HISAT2's does. Their initial graph
+is therefore larger than ours, which points at the per-window admission rule —
+we take haplotypes with `left >= a && right < b` and so drop every haplotype
+straddling a window boundary, while the C++ evidently clips rather than drops.
+
+Working out the exact admission rule is the same kind of question the
+`generateEdges` merge-join was, and deserves the same treatment: dump
+`tParam.alts` and `tParam.haplotypes` for window 0 from the instrumented build
+and compare, rather than infer.
+
+## Status
+
+| file | state |
+|---|---|
+| `.1.ht2` | fully reproduced, byte for byte |
+| `.2.ht2` | fully reproduced |
+| `.3`/`.4.ht2` | reproduced since rung 2 |
+| `.5`/`.6.ht2` | layout parses exactly to 55,172 local indexes; emission byte-identical for a window that does not explode; windowing coordinate space and per-window variant admission still open |

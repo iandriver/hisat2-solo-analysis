@@ -136,8 +136,15 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
 pub fn build_range(p: &Parsed, a: u32, b: u32, first: bool, last: bool)
     -> (Vec<(u8, u32)>, Vec<(u32, u32)>, usize)
 {
-    let text = &p.text;
-    let alts = &p.alts;
+    build_range_with(&p.text, &p.alts, &p.haps, a, b, first, last)
+}
+
+/// As `build_range`, but over an explicit variant set -- which the local-index
+/// retry needs, since a graph that explodes is rebuilt from a thinned list.
+pub fn build_range_with(text: &[u8], alts: &[Alt], in_haps: &[Hap],
+                        a: u32, b: u32, first: bool, last: bool)
+    -> (Vec<(u8, u32)>, Vec<(u32, u32)>, usize)
+{
     let span = (b - a) as usize;
     let mut nodes: Vec<(u8, u32)> = Vec::with_capacity(span + 2);
     let mut edges: Vec<(u32, u32)> = Vec::with_capacity(span + 2);
@@ -167,7 +174,7 @@ pub fn build_range(p: &Parsed, a: u32, b: u32, first: bool, last: bool)
 
     // haplotypes wholly inside this range, with positions shifted local
     let off = a;
-    let haps: Vec<&Hap> = p.haps.iter().filter(|h| h.left >= a && h.right < b).collect();
+    let haps: Vec<&Hap> = in_haps.iter().filter(|h| h.left >= a && h.right < b).collect();
     let mut out_of_order_haps = 0usize;
     for h in haps.into_iter() {
         let mut pass = true;

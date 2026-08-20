@@ -21,6 +21,26 @@ const LOCAL_INTERVAL: u32 = LOCAL_SIZE - LOCAL_OVERLAP;
 const LOCAL_LINE_RATE: u32 = 7;
 const LOCAL_OFF_RATE: u32 = 3;
 const LOCAL_FTAB_CHARS: u32 = 6;
+const LOCAL_MAX_GBWT: u32 = (1 << 16) - (1 << 11);   // 63,488
+
+/// `HGFM::selectAlts` -- keep `k` variants evenly spaced through the original
+/// list and rebuild one single-variant haplotype per kept variant.
+fn select_alts(orig: &[graph::Alt], k: usize) -> (Vec<graph::Alt>, Vec<graph::Hap>) {
+    let n = orig.len();
+    let k = k.min(n);
+    let mut alts = Vec::with_capacity(k);
+    let mut haps = Vec::with_capacity(k);
+    if k == 0 { return (alts, haps); }
+    for i in 0..k {
+        let o = &orig[(i as u64 * n as u64 / k as u64) as usize];
+        alts.push(graph::Alt { pos: o.pos, len: o.len, seq: o.seq, typ: o.typ });
+    }
+    for (a, alt) in alts.iter().enumerate() {
+        let right = if alt.typ == graph::ALT_DEL { alt.pos + alt.len - 1 } else { alt.pos };
+        haps.push(graph::Hap { left: alt.pos, right, alts: vec![a as u32] });
+    }
+    (alts, haps)
+}
 
 fn put16(v: &mut Vec<u8>, x: u32) { v.extend_from_slice(&(x as u16).to_le_bytes()); }
 fn put32(v: &mut Vec<u8>, x: u32) { v.extend_from_slice(&x.to_le_bytes()); }
@@ -55,9 +75,52 @@ fn main() {
         let b0 = (a0 + LOCAL_SIZE).min(len);
         let wlen = b0 - a0;
         // graph over just this window; the same construction as the global one
-        let (n, e, _) = graph::build_range(&p, a0, b0, true, true);
-        let (gn, ge, last) = graph::reverse_determinize(&n, &e, wlen + 1);
-        let g = gfmbuild::build_gfm(&gn, &ge, last, wlen, LOCAL_OFF_RATE);
+        // A local graph that grows past local_max_gbwt nodes is thrown away and
+        // rebuilt from a thinned variant set; hgfm.h:1954 binary-searches for the
+        // largest set that fits. tiny.log shows zero explosions, which is why a
+        // single window matched without any of this; clean.log shows 13.
+        let orig: Vec<graph::Alt> = p.alts.iter()
+            .filter(|x| x.pos >= a0 && x.pos < b0)
+            .map(|x| graph::Alt { pos: x.pos, len: x.len, seq: x.seq, typ: x.typ })
+            .collect();
+        let mut alts: Vec<graph::Alt> = orig.iter()
+            .map(|x| graph::Alt { pos: x.pos, len: x.len, seq: x.seq, typ: x.typ }).collect();
+        let mut haps: Vec<graph::Hap> = p.haps.iter()
+            .filter(|h| h.left >= a0 && h.right < b0)
+            .map(|h| graph::Hap { left: h.left, right: h.right, alts: h.alts.clone() })
+            .collect();
+        let (mut bs_active, mut bs_lo, mut bs_hi) = (false, 0usize, 0usize);
+        let mut bs_cur = alts.len();
+        let mut dropped = 0usize;
+        let g;
+        loop {
+            let (n, e, _) = graph::build_range_with(&p.text, &alts, &haps, a0, b0, true, true);
+            let (gn, ge, last) = graph::reverse_determinize(&n, &e, wlen + 1);
+            let built = gfmbuild::build_gfm(&gn, &ge, last, wlen, LOCAL_OFF_RATE, LOCAL_MAX_GBWT);
+            let exploded = match &built {
+                None => true,
+                Some(b) => b.gbwt_len > LOCAL_MAX_GBWT,
+            };
+            if !exploded && bs_active && bs_hi > bs_lo + 1 {
+                bs_lo = bs_cur;
+                bs_cur = bs_lo + (bs_hi - bs_lo) / 2;
+                let (na, nh) = select_alts(&orig, bs_cur);
+                alts = na; haps = nh;
+                continue;
+            }
+            if exploded {
+                if !bs_active { bs_active = true; bs_lo = 0; }
+                bs_hi = bs_cur;
+                bs_cur = if bs_hi <= bs_lo + 1 { bs_lo } else { bs_lo + (bs_hi - bs_lo) / 2 };
+                let (na, nh) = select_alts(&orig, bs_cur);
+                alts = na; haps = nh;
+                continue;
+            }
+            dropped = orig.len() - alts.len();
+            g = built.unwrap();
+            break;
+        }
+        let _ = dropped;
 
         let linear = g.len + 1 == g.gbwt_len;
         let gbwt_sz = if linear { g.gbwt_len / 4 + 1 } else { g.gbwt_len / 2 + 1 } as usize;
