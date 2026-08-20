@@ -46,6 +46,12 @@ pub struct Parsed {
     pub text: Vec<u8>,
     pub alts: Vec<Alt>,
     pub haps: Vec<Hap>,
+    /// The variant IDs, in the same order as `alts`, as one blob of
+    /// newline-terminated names plus a start offset each. `.8.ht2` is exactly
+    /// this blob behind a sentinel and a count, and 12.3M separate `String`s
+    /// would cost more in headers than the names do in bytes.
+    pub alt_names: Vec<u8>,
+    pub alt_name_at: Vec<u32>,
     pub dropped_snps: usize,
     pub dropped_haps: usize,
     pub out_of_order_haps: usize,
@@ -115,6 +121,8 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     };
 
     let mut alts: Vec<Alt> = Vec::new();
+    let mut alt_names: Vec<u8> = Vec::new();
+    let mut alt_name_at: Vec<u32> = Vec::new();
     let mut alt_id: HashMap<String, u32> = HashMap::new();
     let mut dropped_snps = 0usize;
     for_each_line(snp, "snp", |line| {
@@ -134,8 +142,12 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
             other => panic!("unknown snp type '{other}'"),
         };
         alt_id.insert(f[0].to_string(), alts.len() as u32);
+        alt_name_at.push(alt_names.len() as u32);
+        alt_names.extend_from_slice(f[0].as_bytes());
+        alt_names.push(b'\n');
         alts.push(Alt { pos, len: len_, seq, typ });
     });
+    alt_name_at.push(alt_names.len() as u32);
     let mut haps: Vec<Hap> = Vec::new();
     let mut dropped_haps = 0usize;
     for_each_line(hap, "haplotype", |line| {
@@ -158,7 +170,43 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
             .unwrap_or_default();
         seqs.push((name.clone(), *full, rs));
     }
-    Parsed { seqs, text, alts, haps, dropped_snps, dropped_haps, out_of_order_haps: 0 }
+    // `_alts` is sorted before anything is built with it (gfm.h:1863), and the
+    // names and every haplotype's alt indices are permuted to match. The
+    // fixtures' variant files happen to arrive sorted, so this is a no-op on
+    // them -- but a variant file that is not position-sorted would otherwise
+    // build a different index here than `hisat2-build` does.
+    {
+        let rank = |t: u8| -> u8 { match t { ALT_INS => 1, ALT_SGL => 2, _ => 4 } };
+        let mut ord: Vec<u32> = (0..alts.len() as u32).collect();
+        // Stable, which is what pairing each ALT with its index achieves in the
+        // C++: equal variants keep their file order.
+        ord.sort_by_key(|&i| {
+            let a = &alts[i as usize];
+            (a.pos, rank(a.typ), a.len, a.seq)
+        });
+        if ord.iter().enumerate().any(|(i, &o)| i as u32 != o) {
+            let mut new_alts: Vec<Alt> = Vec::with_capacity(alts.len());
+            let mut new_names: Vec<u8> = Vec::with_capacity(alt_names.len());
+            let mut new_at: Vec<u32> = Vec::with_capacity(alt_name_at.len());
+            let mut back = vec![0u32; alts.len()];
+            for (i, &o) in ord.iter().enumerate() {
+                back[o as usize] = i as u32;
+                let a = &alts[o as usize];
+                new_alts.push(Alt { pos: a.pos, len: a.len, seq: a.seq, typ: a.typ });
+                new_at.push(new_names.len() as u32);
+                new_names.extend_from_slice(
+                    &alt_names[alt_name_at[o as usize] as usize..alt_name_at[o as usize + 1] as usize]);
+            }
+            new_at.push(new_names.len() as u32);
+            alts = new_alts; alt_names = new_names; alt_name_at = new_at;
+            for h in haps.iter_mut() {
+                for a in h.alts.iter_mut() { *a = back[*a as usize]; }
+            }
+        }
+        haps.sort_by_key(|h| (h.left, h.right));
+    }
+    Parsed { seqs, text, alts, haps, alt_names, alt_name_at,
+             dropped_snps, dropped_haps, out_of_order_haps: 0 }
 }
 
 /// Build the nodes and edges for reference range `[a, b)` with LOCAL indices:

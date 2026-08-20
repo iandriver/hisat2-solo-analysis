@@ -530,3 +530,21 @@ reason.
 Regenerating the set immediately paid for itself — the two variant-free-window
 cases had never been built before, and both crashed the emitter. See
 `local_index_layout.md`.
+
+## Whole-genome path
+
+`ht2wg` builds a complete graph index — `.1` through `.8` — off the fragmented
+graph builder and the external doubling loop, and writes it rather than
+comparing against one. It is verified byte for byte on every fixture at both
+index widths, and on a 20 Mb reference where it uses 197 MB against
+`hisat2-build`'s 3.28 GB.
+
+```bash
+ht2wg <reference.fa> <snp> <haplotype> <workdir> <out_prefix> [budget_records] [verify_prefix]
+```
+
+`verify_wg.sh <fixture_dir>` runs the sweep; `HT2_LARGE=1` on either script
+switches to the 64-bit (`.ht2l`) half, which is what a whole-genome index is.
+
+See `external_emitter.md` for the design and `whole_genome_plan.md` for what a
+real whole-genome run still needs.

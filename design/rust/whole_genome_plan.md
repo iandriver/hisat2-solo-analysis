@@ -134,6 +134,25 @@ the curve rather than by reading:
 Gate: generation curve identical on chr22, then chr1, with peak RSS held under a
 declared budget.
 
+## Steps 1-3 — **DONE**, and step 4's emitter with them
+
+`ht2wg` builds a complete graph index off the fragmented graph builder and the
+external doubling loop, and writes it. All eight files, both index widths, byte
+for byte against `hisat2-build`:
+
+| reference | path nodes | C++ wall / RSS | Rust wall / RSS |
+|---|---|---|---|
+| 200 bp - 900 kb (8 fixtures) | 241 - 1.0M | — | 32-82 MB |
+| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / **3,277 MB** | 44.9 s / **197 MB** |
+
+3.0x the wall, **16.6x less memory**, single-threaded against a build that had
+96 vCPU available. Peak RSS is not a function of the path-node count at all: it
+is `graph::parse`'s joined text plus one F-bit rank per side.
+
+See `external_emitter.md` for what had to stop being an array, the ftab trie
+that cuts 10.5M LF steps to a 1.4M ceiling, and the two bugs the in-memory
+oracle could not have caught.
+
 ## Step 4 — run it, and diff against the artifact
 
 Build the whole genome from the same inputs (`genome.snp`, `genome.haplotype` in
@@ -142,6 +161,42 @@ S3) and byte-compare `.1`–`.8` against `s3://rustar-bench/hisat2-wg64/index/`.
 Anything short of byte-identity is a bug with a known address, because every
 intermediate — reference graph size, per-generation node and rank counts, GFM row
 characters, F bits — already has its own oracle.
+
+**What the run still needs, measured rather than assumed.** At 20 Mb the
+external path peaks at 2.82 GB of scratch over 21,171,995 path nodes — 133 bytes
+each, or 7.4 copies of the 18-byte node — and 2.1 µs of wall per node.
+Extrapolating to the 5,917,131,871 path nodes E3 measured:
+
+| | projected |
+|---|---|
+| scratch disk | **~790 GB** |
+| peak RSS | ~3.5-4.5 GB, nearly all of it the joined text |
+| wall | 4-8 h single-threaded, from ~20 TB of sequential I/O at 1-2 GB/s |
+| output | 11 GB |
+
+The scratch figure is the one worth attacking before a real run, and it is
+attackable: the peak is four full copies of the node file alive at once
+(`cur`, `by_to`, `by_from`, `joined`) plus a sort's run files on top. `by_to`
+can be dropped as the join consumes it, and from generation 5 on only the
+unsorted nodes need re-joining at all. None of that is done — the number above
+is what the code does today, not what the algorithm requires.
+
+Three things block the run here rather than in the code:
+
+1. **Disk.** 52 GiB free on this machine against ~790 GB of scratch. The wall
+   estimate also assumes NVMe; on anything slower the I/O term dominates.
+2. **The inputs are not local.** `wg64_idx/genome.*.ht2l` is here — the 11 GB
+   artifact to diff against — but `genome.fa`, `genome.snp` and
+   `genome.haplotype` are not.
+3. **`u32` reference-graph node ids.** GRCh38 with this panel needs ~3.05e9 of
+   them against a 4.29e9 ceiling, with `u32::MAX` spent on the `setSorted`
+   sentinel. It fits, with 28% headroom, and it is the first width to widen for
+   anything larger. The path-node ranks are already 40-bit.
+
+Neither of the first two is a reason to change anything: they are a machine with
+a bigger disk and one `aws s3 cp`. Two smaller things would matter on a run that
+long, though — it is single-threaded, and it cannot resume, so a failure at hour
+six costs all six.
 
 ## What is deliberately not in this plan
 
@@ -159,10 +214,12 @@ this one. It stays a later, bigger prize.
 
 ## Order of work
 
-1. graph `.1`–`.6` byte-identical at chr22 scale — finishes the rung already in flight
-2. packed node + parameterised id width — small, and halves step 3's I/O
-3. external sort-merge doubling, with `mergeUpdateRank` re-derived for streaming
-4. whole-genome run, byte-diff against the S3 index
+1. ~~graph `.1`–`.6` byte-identical at chr22 scale~~ — done, and `.7`/`.8` with them
+2. ~~packed node + parameterised id width~~ — done: 18-byte node, and the index
+   width is a flag with a 64-bit fixture set behind it
+3. ~~external sort-merge doubling, with `mergeUpdateRank` re-derived for streaming~~ — done
+4. whole-genome run, byte-diff against the S3 index — **blocked on disk and on
+   the input files, not on the builder**
 
 Steps 1 and 2 are bounded and well-understood. Step 3 is the research risk, and
 it is the only one.

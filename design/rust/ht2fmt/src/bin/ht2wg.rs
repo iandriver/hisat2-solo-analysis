@@ -181,7 +181,7 @@ fn main() -> std::io::Result<()> {
     println!("wrote {out}.1.{ext} ({} bytes), .2, .3, .4",
              fs::metadata(&path1)?.len());
 
-    // ---- .5.ht2 / .6.ht2, one 57,344 bp window at a time ----------------
+    // ---- .5 through .8: the local indexes and the variant database ------
     // The reference is parsed a second time here rather than kept across the
     // doubling: holding the joined text plus the variant list through a
     // whole-genome build costs more than re-reading them costs.
@@ -191,6 +191,38 @@ fn main() -> std::io::Result<()> {
         let mut w6 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.6.{ext}"))?);
         local5::emit(&p, &mut w5, &mut w6, w, true)?;
         w5.flush()?; w6.flush()?;
+
+        // ---- .7.ht2 / .8.ht2: the variant database ----------------------
+        // Not part of the graph at all -- a straight serialisation of the alt
+        // and haplotype lists (gfm.h:1912), which is where `Zs:Z` gets its rsIDs
+        // from. The repeat block that follows is empty unless `--repeat-ref` was
+        // given, which is why the fixtures' `.7` ends exactly at the haplotypes.
+        let mut o7: Vec<u8> = Vec::new();
+        put(&mut o7, 1);
+        put_idx(&mut o7, p.alts.len() as u64);
+        for x in &p.alts {
+            put_idx(&mut o7, x.pos as u64);
+            // our own type codes are not HISAT2's ALT_TYPE enum
+            put(&mut o7, match x.typ { graph::ALT_SGL => 1, graph::ALT_INS => 2, _ => 3 });
+            put_idx(&mut o7, x.len as u64);
+            o7.extend_from_slice(&x.seq.to_le_bytes());
+        }
+        put_idx(&mut o7, p.haps.len() as u64);
+        for h in &p.haps {
+            put_idx(&mut o7, h.left as u64);
+            put_idx(&mut o7, h.right as u64);
+            put_idx(&mut o7, h.alts.len() as u64);
+            for &i in &h.alts { put_idx(&mut o7, i as u64); }
+        }
+        fs::write(format!("{out}.7.{ext}"), &o7)?;
+
+        let mut o8: Vec<u8> = Vec::new();
+        put(&mut o8, 1);
+        put_idx(&mut o8, p.alts.len() as u64);
+        o8.extend_from_slice(&p.alt_names);
+        fs::write(format!("{out}.8.{ext}"), &o8)?;
+        println!("wrote {out}.7.{ext} ({} bytes) and .8.{ext} ({} bytes) -- {} variants, {} haplotypes",
+                 o7.len(), o8.len(), p.alts.len(), p.haps.len());
     }
     println!("wrote {out}.5.{ext} ({} bytes) and .6.{ext} ({} bytes)",
              fs::metadata(format!("{out}.5.{ext}"))?.len(),
@@ -206,7 +238,7 @@ fn main() -> std::io::Result<()> {
     if let Some(v) = verify {
         println!("\nagainst {v}:");
         let mut ok = doubling::check_curve(&d.curve, &format!("{v}.log"));
-        for n in 1..=6 {
+        for n in 1..=8 {
             ok &= compare(&format!("{out}.{n}.{ext}"), &format!("{v}.{n}.{ext}"));
         }
         if !ok { process::exit(1); }
