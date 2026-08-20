@@ -29,96 +29,14 @@
 //! (gfm.h:4308). They are asserted against the reference header rather than
 //! assumed silently.
 
+#[path = "../refin.rs"]
+mod refin;
+
+use refin::read_fasta;
 use std::convert::TryInto;
 use std::{env, fs};
 
 const HI: u32 = u32::MAX;
-
-#[derive(Clone, Copy)]
-struct Frag { joined_off: u32, text_id: u32, text_off: u32 }
-
-/// One `RefRecord` as `.3.ht2` stores it: the number of ambiguous characters
-/// immediately preceding an unambiguous stretch, the stretch's length, and
-/// whether it opens a new sequence. A sequence that ENDS in ambiguity
-/// contributes a further record with `len == 0` carrying that trailing count,
-/// which is why `.3.ht2` can hold more records than `.1.ht2` has `rstarts`
-/// entries -- `joinToDisk` keeps only the non-empty ones.
-#[derive(Clone, Copy)]
-struct RefRec { off: u32, len: u32, first: bool }
-
-struct Reference {
-    names: Vec<String>,
-    plen: Vec<u32>,
-    frags: Vec<Frag>,
-    recs: Vec<RefRec>,
-    text: Vec<u8>,
-}
-
-fn code(c: u8) -> Option<u8> {
-    match c.to_ascii_uppercase() {
-        b'A' => Some(0), b'C' => Some(1), b'G' => Some(2), b'T' => Some(3), _ => None,
-    }
-}
-
-fn read_fasta(path: &str) -> Reference {
-    let raw = fs::read(path).expect("cannot read reference");
-    let mut r = Reference { names: Vec::new(), plen: Vec::new(), frags: Vec::new(),
-                            recs: Vec::new(), text: Vec::new() };
-    let mut text_off: u32 = 0;
-    let mut in_frag = false;
-    let mut amb: u32 = 0;        // ambiguous characters seen since the last record
-    let mut seq_started = false; // has this sequence produced a record yet?
-    for line in raw.split(|&b| b == b'\n') {
-        if line.is_empty() { continue; }
-        if line[0] == b'>' {
-            if !r.names.is_empty() {
-                r.plen.push(text_off);
-                if amb > 0 { r.recs.push(RefRec { off: amb, len: 0, first: !seq_started }); }
-            }
-            amb = 0;
-            seq_started = false;
-            // `_refnames` keeps the WHOLE header line. `_refnames_nospace`
-            // (gfm.h:1400) is a separate, whitespace-truncated copy used only to
-            // match chromosome names against SNP/splice-site files -- it is not
-            // what gets written. A single-sequence reference whose header has no
-            // description cannot tell the two apart; multi.fa can.
-            let name: String = line[1..].iter()
-                .take_while(|&&c| c != b'\r')
-                .map(|&c| c as char).collect();
-            r.names.push(name);
-            text_off = 0;
-            in_frag = false;
-            continue;
-        }
-        for &ch in line {
-            if ch == b'\r' { continue; }
-            match code(ch) {
-                Some(v) => {
-                    if !in_frag {
-                        r.frags.push(Frag {
-                            joined_off: r.text.len() as u32,
-                            text_id: (r.names.len() - 1) as u32,
-                            text_off,
-                        });
-                        r.recs.push(RefRec { off: amb, len: 0, first: !seq_started });
-                        amb = 0;
-                        seq_started = true;
-                        in_frag = true;
-                    }
-                    r.text.push(v);
-                    r.recs.last_mut().unwrap().len += 1;
-                }
-                None => { in_frag = false; amb += 1; }
-            }
-            text_off += 1;
-        }
-    }
-    if !r.names.is_empty() {
-        r.plen.push(text_off);
-        if amb > 0 { r.recs.push(RefRec { off: amb, len: 0, first: !seq_started }); }
-    }
-    r
-}
 
 /// HISAT2's suffix array: the text is treated as padded past its end with a
 /// character LARGER than any real one, so the empty suffix sorts last and any

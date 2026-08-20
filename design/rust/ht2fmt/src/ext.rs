@@ -114,7 +114,22 @@ impl PartialOrd for HeapItem { fn partial_cmp(&self, o: &Self) -> Option<Orderin
 
 /// Which ordering an external sort should produce.
 #[derive(Clone, Copy, PartialEq)]
-pub enum By { To, From, Key }
+pub enum By {
+    To,
+    From,
+    Key,
+    /// `generateEdges` order: label bucket, then the ranking the edge points at.
+    /// Ties inside a bucket resolve by the order the edges were pushed, which is
+    /// `sortEdgesFrom` order -- so `(from, to)` finishes the key rather than
+    /// leaning on the sort being stable across a join.
+    Row,
+    /// `nextRow` order: a STABLE sort on ranking alone applied to a list already
+    /// in `Row` order. `k1` carries `label * 2 + decremented` so the tie-break
+    /// can reproduce that stability exactly, including the one case where two
+    /// records reach the same ranking from different ones because the
+    /// second-to-last node was dropped.
+    Rank,
+}
 
 fn keyof(r: &Rec, by: By) -> (u64, u64, u32) {
     match by {
@@ -125,6 +140,8 @@ fn keyof(r: &Rec, by: By) -> (u64, u64, u32) {
         // FIRST of the run, so ties have to break deterministically or the
         // surviving node's `to` changes.
         By::Key  => (r.k0, r.k1, r.from),
+        By::Row  => ((r.k1 << 40) | r.k0, r.from as u64, r.to),
+        By::Rank => ((r.k0 << 4) | r.k1, r.from as u64, r.to),
     }
 }
 
@@ -157,6 +174,31 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path)
     }
     if runs.is_empty() { RecWriter::create(dst)?.finish()?; return Ok(0); }
 
+    // Merge in passes of at most MAX_FANIN runs. A whole-genome sort produces
+    // thousands of runs -- 5.9e9 records at an 18 MB budget is ~5,900 -- and a
+    // single k-way merge would need one open file and one buffer per run, which
+    // hits the file-descriptor limit long before it hits the memory budget.
+    const MAX_FANIN: usize = 64;
+    let mut pass = 0usize;
+    while runs.len() > 1 {
+        let mut next: Vec<PathBuf> = Vec::new();
+        for (gi, group) in runs.chunks(MAX_FANIN).enumerate() {
+            if group.len() == 1 { next.push(group[0].clone()); continue; }
+            let out = tmp.join(format!("merge{pass}_{gi}.bin"));
+            merge_runs(group, &out, by, budget)?;
+            for p in group { let _ = std::fs::remove_file(p); }
+            next.push(out);
+        }
+        runs = next;
+        pass += 1;
+    }
+    std::fs::rename(&runs[0], dst)?;
+    Ok(std::fs::metadata(dst)?.len() / REC as u64)
+}
+
+/// One k-way merge over `runs`, stable: ties break by run index, which is input
+/// order because the runs were produced in order.
+fn merge_runs(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::io::Result<u64> {
     // Split one buffer budget across the runs instead of giving each its own.
     let cap = ((budget * REC) / runs.len().max(1)).clamp(8 * 1024, 1 << 20);
     let mut rds: Vec<RecReader> = runs.iter()
@@ -172,9 +214,7 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path)
             heap.push(HeapItem { key: keyof(&r, by), idx: it.idx, rec: r });
         }
     }
-    let n = w.finish()?;
-    for p in runs { let _ = std::fs::remove_file(p); }
-    Ok(n)
+    w.finish()
 }
 
 /// External sort over 8-byte `(u32, u32)` pairs, for the edge list.

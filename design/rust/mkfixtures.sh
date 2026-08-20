@@ -16,6 +16,11 @@
 # have a bug for two rounds of debugging. This script therefore *rebuilds the
 # binary first* and records its hash next to the fixtures.
 #
+# HT2_LARGE=1 builds the 64-bit (`.ht2l`) variant of the same set instead. A
+# whole-genome index is necessarily large, and `index_t = uint64_t` changes every
+# `writeIndex` field plus the default line rate, so the small fixtures are the
+# only place that path can be checked byte for byte.
+#
 # usage: mkfixtures.sh <outdir> [hisat2_source_dir]
 
 set -euo pipefail
@@ -33,15 +38,17 @@ for f in "$REF" "$SNP" "$TESTDATA/mkmulti.py"; do
 done
 
 # --- 1. rebuild the builder from current source ------------------------------
-echo "== rebuilding hisat2-build-s from $SRC"
-make -C "$SRC" hisat2-build-s >/dev/null
-BUILDER="$SRC/hisat2-build-s"
+BIN=hisat2-build-s
+[ -n "${HT2_LARGE:-}" ] && BIN=hisat2-build-l
+echo "== rebuilding $BIN from $SRC"
+make -C "$SRC" $BIN >/dev/null
+BUILDER="$SRC/$BIN"
 
 # Guard against the failure this script was written for: a binary older than
 # the sources it was supposedly built from.
 newer=$(find "$SRC" -maxdepth 1 \( -name '*.cpp' -o -name '*.h' \) -newer "$BUILDER" -print -quit)
 if [ -n "$newer" ]; then
-  echo "hisat2-build-s is older than $newer -- refusing to build stale fixtures" >&2
+  echo "$BIN is older than $newer -- refusing to build stale fixtures" >&2
   exit 1
 fi
 

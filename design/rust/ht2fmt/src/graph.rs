@@ -51,6 +51,22 @@ pub struct Parsed {
     pub out_of_order_haps: usize,
 }
 
+/// Iterate a file's lines without holding it. `read_to_string` on a 3.2 GB
+/// FASTA doubles peak memory for the length of the parse, which is the largest
+/// single allocation in a whole-genome build and buys nothing.
+fn for_each_line<F: FnMut(&str)>(path: &str, what: &str, mut f: F) {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("{what}: {e}"));
+    let mut r = std::io::BufReader::with_capacity(1 << 20, file);
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.clear();
+        if r.read_until(b'\n', &mut buf).expect(what) == 0 { break; }
+        while buf.last() == Some(&b'\n') || buf.last() == Some(&b'\r') { buf.pop(); }
+        f(std::str::from_utf8(&buf).expect("utf8"));
+    }
+}
+
 pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     let mut text: Vec<u8> = Vec::new();
     let mut runs: HashMap<String, Vec<Run>> = HashMap::new();
@@ -60,7 +76,7 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     // the true length of each sequence, ambiguity included -- runs only record
     // the unambiguous stretches, so a sequence ending in N would look short
     let mut plen: Vec<(String, u32)> = Vec::new();
-    for line in fs::read_to_string(fa).expect("fa").lines() {
+    for_each_line(fa, "fa", |line| {
         if let Some(rest) = line.strip_prefix('>') {
             // close the previous sequence before adopting the new name
             if !cur.is_empty() { plen.push((cur.clone(), chrom_off)); }
@@ -68,7 +84,7 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
             runs.entry(cur.clone()).or_default();
             chrom_off = 0;
             in_run = false;
-            continue;
+            return;
         }
         for c in line.bytes() {
             let v = match c.to_ascii_uppercase() {
@@ -88,7 +104,7 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
             }
             chrom_off += 1;
         }
-    }
+    });
     let len = text.len() as u32;
     let joined = |chrom: &str, pos: u32| -> Option<u32> {
         let rs = runs.get(chrom)?;
@@ -101,11 +117,11 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     let mut alts: Vec<Alt> = Vec::new();
     let mut alt_id: HashMap<String, u32> = HashMap::new();
     let mut dropped_snps = 0usize;
-    for line in fs::read_to_string(snp).expect("snp").lines() {
+    for_each_line(snp, "snp", |line| {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 5 { continue; }
+        if f.len() < 5 { return; }
         let pos = match joined(f[2], f[3].parse::<u32>().expect("snp pos")) {
-            Some(p) => p, None => { dropped_snps += 1; continue; }
+            Some(p) => p, None => { dropped_snps += 1; return; }
         };
         let (typ, len_, seq) = match f[1] {
             "single" => (ALT_SGL, 1u32, "ACGT".find(f[4].as_bytes()[0] as char).expect("allele") as u64),
@@ -119,12 +135,12 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
         };
         alt_id.insert(f[0].to_string(), alts.len() as u32);
         alts.push(Alt { pos, len: len_, seq, typ });
-    }
+    });
     let mut haps: Vec<Hap> = Vec::new();
     let mut dropped_haps = 0usize;
-    for line in fs::read_to_string(hap).expect("haplotype").lines() {
+    for_each_line(hap, "haplotype", |line| {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 5 { continue; }
+        if f.len() < 5 { return; }
         let ids: Option<Vec<u32>> = f[4].split(',').map(|s| alt_id.get(s).copied()).collect();
         let (l, r) = (joined(f[1], f[2].parse::<u32>().expect("hap left")),
                       joined(f[1], f[3].parse::<u32>().expect("hap right")));
@@ -133,7 +149,7 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
                 haps.push(Hap { left, right, alts: ids }),
             _ => dropped_haps += 1,
         }
-    }
+    });
     if !cur.is_empty() { plen.push((cur.clone(), chrom_off)); }
     let mut seqs: Vec<(String, u32, Vec<(u32, u32, u32)>)> = Vec::new();
     for (name, full) in plen.iter() {
