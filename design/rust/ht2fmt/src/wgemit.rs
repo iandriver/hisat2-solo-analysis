@@ -17,7 +17,7 @@
 //! primitive with no per-side tally to stand on, and one `u64` per side is
 //! 228 MB for a human graph.
 
-use super::ext::{self, By, Rec, RecReader, RecWriter};
+use super::ext::{self, By, Rec, SegReader, SegWriter};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::unix::fs::FileExt;
@@ -172,15 +172,15 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
 
     // (a) path nodes by `from`, which is what the `start[]` CSR indexes: for a
     //     given reference node, the path nodes that hang off it.
-    ext::sort_external(cur, &nbf0, By::From, budget, wd)?;
+    ext::sort_external(cur, &nbf0, By::From, budget, wd, true)?;
 
     // (b) give each path node the genomic position of its reference node, the
     //     way `n.to = b.nodes[n.from].1` does. `nodes.bin` is in id order and
     //     `nbf0` is sorted by id, so this is one forward pass.
     let n_nodes_raw = {
-        let mut r = RecReader::open(&nbf0)?;
+        let mut r = SegReader::open(&nbf0, true)?;
         let mut nf = BufReader::with_capacity(1 << 20, File::open(&nodes_bin)?);
-        let mut w = RecWriter::create(&nbf)?;
+        let mut w = SegWriter::create(&nbf)?;
         let mut nbuf = [0u8; 5];
         let (mut node_i, mut val) = (0u64, 0u32);
         let mut idx = 0u64;
@@ -197,14 +197,7 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
         }
         w.finish()?
     };
-    let _ = fs::remove_file(&nbf0);
-
-    // The merge-join further down walks the nodes in RANK order, not `from`
-    // order -- `generateEdges` re-sorts them (`nodes.sort_by_key(|n| n.k0)`)
-    // between building the buckets and pairing them off, and missing that makes
-    // the scan stall on its first mismatch. Ranks are unique at convergence, so
-    // this is just `cur.bin`'s own order with the positions attached.
-    ext::sort_external(&nbf, &nbr, By::Key, budget, wd)?;
+    ext::seg_remove(&nbf0);
 
     // (c) each reference edge carries the LABEL of its `from` node into the
     //     join, because after sorting by `to` the label is no longer a forward
@@ -212,7 +205,7 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
     {
         let mut ef = BufReader::with_capacity(1 << 20, File::open(&edges_bin)?);
         let mut nf = BufReader::with_capacity(1 << 20, File::open(&nodes_bin)?);
-        let mut w = RecWriter::create(&elab)?;
+        let mut w = SegWriter::create(&elab)?;
         let (mut nbuf, mut ebuf) = ([0u8; 5], [0u8; 8]);
         let (mut node_i, mut lab) = (0u64, 0u8);
         loop {
@@ -228,16 +221,17 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
         }
         w.finish()?;
     }
-    ext::sort_external(&elab, &ebt, By::To, budget, wd)?;
-    let _ = fs::remove_file(&elab);
+    ext::sort_external(&elab, &ebt, By::To, budget, wd, true)?;
 
     // (d) the join itself: for each edge, one row per path node whose `from` is
     //     the edge's `to`, labelled by the edge's `from` node.
     let mut bucket = [0u64; 6];
     {
-        let mut e = RecReader::open(&ebt)?;
-        let mut n = RecReader::open(&nbf)?;
-        let mut w = RecWriter::create(&trip)?;
+        // `ebt` is dead after this; `nbf` is not -- the rank-ordered copy is
+        // built from it below, and that sort is what frees it.
+        let mut e = SegReader::open(&ebt, true)?;
+        let mut n = SegReader::open(&nbf, false)?;
+        let mut w = SegWriter::create(&trip)?;
         let mut ncur = n.next()?;
         let mut group: Vec<Rec> = Vec::new();
         let mut group_key = u32::MAX;
@@ -259,9 +253,19 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
         }
         w.finish()?;
     }
-    let _ = fs::remove_file(&ebt);
-    ext::sort_external(&trip, &ed, By::Row, budget, wd)?;
-    let _ = fs::remove_file(&trip);
+    ext::seg_remove(&ebt);
+
+    // The merge-join further down walks the nodes in RANK order, not `from`
+    // order -- `generateEdges` re-sorts them (`nodes.sort_by_key(|n| n.k0)`)
+    // between building the buckets and pairing them off, and missing that makes
+    // the scan stall on its first mismatch. Ranks are unique at convergence, so
+    // this is just `cur.bin`'s own order with the positions attached.
+    //
+    // Built HERE rather than beside `nbf`, so the two orderings of the node list
+    // are never alive at the same time as the join's inputs. `nbf` was only ever
+    // the `start[]` side of that join and is dead the moment it finishes.
+    ext::sort_external(&nbf, &nbr, By::Key, budget, wd, true)?;
+    ext::sort_external(&trip, &ed, By::Row, budget, wd, true)?;
 
     let gbwt_len: u64 = bucket.iter().sum();
     if verbose {
@@ -280,8 +284,8 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
     //     `from` is never read again.
     let nodeinfo_raw = wd.join("nodeinfo_raw.bin");
     {
-        let mut e = RecReader::open(&ed)?;
-        let mut n = RecReader::open(&nbr)?;
+        let mut e = SegReader::open(&ed, false)?;
+        let mut n = SegReader::open(&nbr, true)?;
         let mut w = NodeInfoWriter::create(&nodeinfo_raw)?;
         let mut ncur = n.next()?;
         let mut ecur = e.next()?;
@@ -324,8 +328,8 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
     //     ranking from different ones and their original order is not recoverable
     //     from the new key.
     {
-        let mut r = RecReader::open(&ed)?;
-        let mut w = RecWriter::create(&ed2)?;
+        let mut r = SegReader::open(&ed, true)?;
+        let mut w = SegWriter::create(&ed2)?;
         while let Some(mut x) = r.next()? {
             let mut dec = 0u64;
             if x.k1 == 4 { x.k1 = 5; }
@@ -335,9 +339,8 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
         }
         w.finish()?;
     }
-    let _ = fs::remove_file(&ed);
-    ext::sort_external(&ed2, &edr, By::Rank, budget, wd)?;
-    let _ = fs::remove_file(&ed2);
+    ext::seg_remove(&ed);
+    ext::sort_external(&ed2, &edr, By::Rank, budget, wd, true)?;
 
     // (h) rows in nextRow order, with the F bit, plus the F-run start of every
     //     node. `floc` has an entry for EVERY node, including those with no
@@ -345,7 +348,7 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
     let rows = wd.join("rows.bin");
     let floc = wd.join("floc.bin");
     {
-        let mut r = RecReader::open(&edr)?;
+        let mut r = SegReader::open(&edr, true)?;
         let mut w = RowWriter::create(&rows)?;
         let mut fw = U40Writer::create(&floc)?;
         let mut emitted = 0u64;
@@ -365,9 +368,8 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
         w.finish()?; fw.finish()?;
         if verbose { println!("  nextRow order: {emitted} rows of {gbwt_len}"); }
     }
-    let _ = fs::remove_file(&edr);
-    let _ = fs::remove_file(&nbf);
-    let _ = fs::remove_file(&nbr);
+    ext::seg_remove(&edr);
+    ext::seg_remove(&nbr);
     Ok(Rows { rows, nodeinfo, floc, n_nodes, gbwt_len, bucket })
 }
 

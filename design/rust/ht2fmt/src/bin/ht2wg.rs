@@ -104,8 +104,8 @@ fn main() -> std::io::Result<()> {
 
     // ---- the path graph, fragmented and external ------------------------
     let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true)?;
+    // generate_edges consumes `cur` -- it reads it once, to sort by `from`
     let rs = wgemit::generate_edges(&wd, &d.cur, budget, true)?;
-    let _ = fs::remove_file(&d.cur);
     let g = wgemit::geom(rs.gbwt_len, line_rate, w);
 
     // ---- .1.ht2 through the gbwt block, and .2.ht2 ----------------------

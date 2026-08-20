@@ -17,7 +17,7 @@
 //! hundred records forces real runs and a real k-way merge on a 200 bp graph.
 
 use super::ext;
-use super::ext::{By, Rec, RecReader, RecWriter, SORTED};
+use super::ext::{By, Rec, SegReader, SegWriter, SORTED};
 use super::graph;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,9 +26,10 @@ use std::path::{Path, PathBuf};
 /// `B.from == A.to`. Already-sorted nodes pass through untouched (generations
 /// past the first pruning only re-join the unsorted ones).
 fn join(a_by_to: &Path, b_by_from: &Path, out: &Path, gen: u32) -> std::io::Result<u64> {
-    let mut a = RecReader::open(a_by_to)?;
-    let mut b = RecReader::open(b_by_from)?;
-    let mut w = RecWriter::create(out)?;
+    // Both inputs are read once, strictly forward, and dead afterwards.
+    let mut a = SegReader::open(a_by_to, true)?;
+    let mut b = SegReader::open(b_by_from, true)?;
+    let mut w = SegWriter::create(out)?;
     let mut bcur = b.next()?;
     let mut group: Vec<Rec> = Vec::new();
     let mut group_key: u32 = u32::MAX;
@@ -71,10 +72,10 @@ fn join(a_by_to: &Path, b_by_from: &Path, out: &Path, gen: u32) -> std::io::Resu
 /// its first member; a run spanning several `from` values is genuinely several
 /// nodes at the same rank and all of them survive.
 /// A reader with two records of lookahead, which `mergeUpdateRank` needs.
-struct Peek { r: RecReader, buf: Vec<Rec> }
+struct Peek { r: SegReader, buf: Vec<Rec> }
 
 impl Peek {
-    fn new(p: &Path) -> std::io::Result<Peek> { Ok(Peek { r: RecReader::open(p)?, buf: Vec::new() }) }
+    fn new(p: &Path) -> std::io::Result<Peek> { Ok(Peek { r: SegReader::open(p, true)?, buf: Vec::new() }) }
     fn fill(&mut self, n: usize) -> std::io::Result<()> {
         while self.buf.len() < n {
             match self.r.next()? { Some(x) => self.buf.push(x), None => break }
@@ -106,7 +107,7 @@ impl Peek {
 /// node counts drift the moment pruning starts.
 fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
     let mut p = Peek::new(src)?;
-    let mut w = RecWriter::create(dst)?;
+    let mut w = SegWriter::create(dst)?;
     let mut ranks: u64 = 0;
     let mut out_n: u64 = 0;
     let mut block: Vec<Rec> = Vec::new();
@@ -187,8 +188,8 @@ fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
 fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
     let collapsed = dst.with_extension("collapse");
     {
-        let mut r = RecReader::open(src)?;
-        let mut w = RecWriter::create(&collapsed)?;
+        let mut r = SegReader::open(src, true)?;
+        let mut w = SegWriter::create(&collapsed)?;
         let mut buf: Vec<Rec> = Vec::new();
         let mut prev_key: Option<(u64, u64)> = None;
         let mut eof = false;
@@ -223,8 +224,8 @@ fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)>
     }
 
     // A key that occurs exactly once becomes sorted; equal keys share a rank.
-    let mut r = RecReader::open(&collapsed)?;
-    let mut w = RecWriter::create(dst)?;
+    let mut r = SegReader::open(&collapsed, true)?;
+    let mut w = SegWriter::create(dst)?;
     let mut group: Vec<Rec> = Vec::new();
     let mut ranks: u64 = 0;
     let mut out_n: u64 = 0;
@@ -248,7 +249,7 @@ fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)>
         ranks += 1;
     }
     w.finish()?;
-    let _ = fs::remove_file(&collapsed);
+    ext::seg_remove(&collapsed);
     Ok((out_n, ranks))
 }
 
@@ -287,7 +288,7 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
     {
         let mut nf = std::io::BufReader::with_capacity(1 << 20, fs::File::open(wd.join("nodes.bin"))?);
         let mut ef = std::io::BufReader::with_capacity(1 << 20, fs::File::open(wd.join("edges.bin"))?);
-        let mut w = RecWriter::create(&cur)?;
+        let mut w = SegWriter::create(&cur)?;
         let mut nbuf = [0u8; 5];
         let mut ebuf = [0u8; 8];
         let mut node_i: u64 = 0;
@@ -311,7 +312,7 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         w.finish()?;
     }
 
-    let n0 = fs::metadata(&cur)?.len() / ext::REC as u64;
+    let n0 = ext::seg_len(&cur);
     let mut curve: Vec<(u32, u64, u64, u64)> = vec![(0, n0, n0, 0)];
     if verbose {
         println!("Generation 0 ({n0} -> {n0} nodes, 0 ranks)   [budget {budget} records = {} KB]",
@@ -324,17 +325,25 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
     let mut n_path_nodes = n0;
     loop {
         gen += 1;
-        ext::sort_external(&cur, &by_to, By::To, budget, wd)?;
-        ext::sort_external(&cur, &by_from, By::From, budget, wd)?;
+        // `cur` is dead the moment both orderings of it exist -- the join reads
+        // `by_to` and `by_from`, and whichever branch follows rewrites `cur`
+        // from scratch. Scratch is the binding resource here, so every file gets
+        // deleted at the point it stops being readable rather than at the end of
+        // the generation.
+        ext::sort_external(&cur, &by_to, By::To, budget, wd, false)?;
+        ext::sort_external(&cur, &by_from, By::From, budget, wd, true)?;
         let temp = join(&by_to, &by_from, &joined, gen)?;
+        ext::seg_remove(&by_to);
+        ext::seg_remove(&by_from);
 
         let (nodes, ranks) = if gen <= 3 {
-            fs::rename(&joined, &cur)?;
+            ext::seg_rename(&joined, &cur)?;
             (temp, 0u64)
         } else {
-            ext::sort_external(&joined, &sorted_k, By::Key, budget, wd)?;
+            ext::sort_external(&joined, &sorted_k, By::Key, budget, wd, true)?;
             let (n, rk) = if gen == 4 { merge_update_rank_gen4(&sorted_k, &cur)? }
                           else        { merge_update_rank(&sorted_k, &cur)? };
+            ext::seg_remove(&sorted_k);
             (n, rk)
         };
         if verbose { println!("Generation {gen} ({temp} -> {nodes} nodes, {ranks} ranks)"); }
@@ -343,7 +352,7 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         if gen > 3 && ranks == nodes { break; }
         if gen > 64 { panic!("doubling did not converge"); }
     }
-    for p in [&by_to, &by_from, &joined, &sorted_k] { let _ = fs::remove_file(p); }
+    for p in [&by_to, &by_from, &joined, &sorted_k] { ext::seg_remove(p); }
     Ok(Doubled { cur, n_path_nodes, curve, graph: g })
 }
 

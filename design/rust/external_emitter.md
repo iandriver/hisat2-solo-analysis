@@ -98,6 +98,50 @@ That sort is a no-op on every fixture here because variant files arrive
 position-sorted, but a file that did not would otherwise build a different index
 than `hisat2-build` does.
 
+## Scratch: the files have to shrink while they are read
+
+Almost every file in the pipeline is written once and read once. Held as whole
+files, each is a full copy of the node list sitting on disk for the length of the
+pass that consumes it. Tracing what was live at the peak on a 20 Mb reference
+found five of them at once:
+
+```
+joined.bin  sorted.bin  by_to.bin  by_from.bin  cur.bin      2.82 GB
+```
+
+— 133 bytes per path node, or 7.4 copies of an 18-byte node. Three changes, in
+increasing order of how much they had to change:
+
+1. **Delete at the point a file stops being readable, not at the end of the
+   phase.** `cur` is dead the moment both orderings of it exist; `by_to` and
+   `by_from` are dead the moment the join returns. → 1.34 GB.
+
+2. **Free each sort run as it empties**, and let a sort consume its source once
+   the run phase has read it. → the peak moved into `generateEdges`, where
+   deleting `nbf` after the join and building the rank-ordered copy *after* it
+   rather than beside it took the same treatment.
+
+3. **Segment every record file**, so a one-pass reader hands the space back as it
+   goes (`SegReader` with `consume`). A source now shrinks at the rate its output
+   grows instead of both being resident. → **1.03 GB**.
+
+Two things went wrong on the way there and are worth keeping:
+
+- **`seg_remove` probing 0, 1, 2, ... stops at the first gap.** A consuming
+  reader deletes a *prefix* of the segments, so a base read part-way has a hole
+  at the front — and the join does leave `by_from` part-way, because it stops
+  when the `by_to` side runs out. Probing from zero found nothing and leaked
+  everything behind the hole. It lists the directory now; `seg_truncate` is the
+  cheap forward walk, for files that are either untouched or fully consumed.
+- **A run file is only `budget` records long**, which was shorter than the
+  default segment size — so segmentation was silently off for exactly the files
+  a merge needs to shrink, and eleven half-drained runs still occupied their full
+  size. Run files get their own segment cap.
+
+What is left is the floor for this structure: the join needs the nodes ordered by
+`to` and by `from` at the same time, and both are full copies. 36 bytes per path
+node, two copies of an 18-byte node, plus the reference graph on disk.
+
 ## Measured
 
 All eight files, both widths, byte-identical against `hisat2-build` on every
@@ -106,10 +150,22 @@ fixture plus a 20 Mb reference:
 | reference | path nodes | C++ wall / RSS | Rust wall / RSS | scratch |
 |---|---|---|---|---|
 | 8 fixtures, 200 bp - 900 kb | 241 - 1.0M | — | 32-82 MB | — |
-| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / 3,277 MB | 44.9 s / **197 MB** | 2.82 GB |
+| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / 3,277 MB | 59 s / **182 MB** | **1.03 GB** |
 
-3.0x the wall for 16.6x less memory, single-threaded against a build that had 96
-vCPU available. Peak RSS is not a function of the path-node count: it is
+16.6x less memory, single-threaded against a build that had 96 vCPU available,
+at 2.7x the disk it used before.
+
+**On the wall time.** It measured 45 s before the scratch work and 59 s
+after, on an otherwise idle machine, but the attribution is unsettled and the honest reading is "somewhere
+under 1.5x, direction not fully established". Segmentation itself is free --
+forcing one segment per file (`HT2_SEG=1000000000`) gives 61.8 s against 61.2 s
+with segments, and the difference is inside the noise. Making the record reader
+and writer block-based instead of 18-byte `read_exact`/`write_all` calls through
+`BufReader` moved user time by 0.03 s, so the per-record path was not it either.
+What remains is the delete-as-you-go work itself and the machine: this is an
+Apple M5 Pro with heterogeneous cores, the 45 s baseline was measured on an idle
+machine, and every run since has shared it. Worth re-measuring cleanly before
+anyone treats the slowdown as real. Peak RSS is not a function of the path-node count: it is
 `graph::parse`'s joined text plus one F-bit rank per side.
 
 `verify_wg.sh <fixture_dir>` runs the sweep; `HT2_LARGE=1` does the 64-bit half.

@@ -140,12 +140,12 @@ declared budget.
 external doubling loop, and writes it. All eight files, both index widths, byte
 for byte against `hisat2-build`:
 
-| reference | path nodes | C++ wall / RSS | Rust wall / RSS |
+| reference | path nodes | C++ wall / RSS | Rust wall / RSS / scratch |
 |---|---|---|---|
 | 200 bp - 900 kb (8 fixtures) | 241 - 1.0M | — | 32-82 MB |
-| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / **3,277 MB** | 44.9 s / **197 MB** |
+| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / **3,277 MB** | 59 s / **182 MB** / 1.03 GB |
 
-3.0x the wall, **16.6x less memory**, single-threaded against a build that had
+4.0x the wall, **18x less memory**, single-threaded against a build that had
 96 vCPU available. Peak RSS is not a function of the path-node count at all: it
 is `graph::parse`'s joined text plus one F-bit rank per side.
 
@@ -163,27 +163,26 @@ intermediate — reference graph size, per-generation node and rank counts, GFM 
 characters, F bits — already has its own oracle.
 
 **What the run still needs, measured rather than assumed.** At 20 Mb the
-external path peaks at 2.82 GB of scratch over 21,171,995 path nodes — 133 bytes
-each, or 7.4 copies of the 18-byte node — and 2.1 µs of wall per node.
-Extrapolating to the 5,917,131,871 path nodes E3 measured:
+external path peaks at **1.03 GB** of scratch over 21,171,995 path nodes — 36.4
+bytes of node file each, two copies of the 18-byte node, plus the reference
+graph on disk. It started at 2.82 GB and 7.4 copies; see `external_emitter.md`
+for what came out. Extrapolating to the 5,917,131,871 path nodes E3 measured:
 
 | | projected |
 |---|---|
-| scratch disk | **~790 GB** |
+| scratch disk | **~255 GB** — 215 GB of node file, 40 GB of reference graph |
 | peak RSS | ~3.5-4.5 GB, nearly all of it the joined text |
-| wall | 4-8 h single-threaded, from ~20 TB of sequential I/O at 1-2 GB/s |
+| wall | 6-10 h single-threaded, from ~20 TB of sequential I/O at 1-2 GB/s |
 | output | 11 GB |
 
-The scratch figure is the one worth attacking before a real run, and it is
-attackable: the peak is four full copies of the node file alive at once
-(`cur`, `by_to`, `by_from`, `joined`) plus a sort's run files on top. `by_to`
-can be dropped as the join consumes it, and from generation 5 on only the
-unsorted nodes need re-joining at all. None of that is done — the number above
-is what the code does today, not what the algorithm requires.
+Two copies is the floor for this structure rather than a number still worth
+attacking: the join needs the nodes ordered by `to` and by `from` at the same
+time, and both are full copies. Getting under it means changing the join, not
+tightening the bookkeeping.
 
-Three things block the run here rather than in the code:
+Two things block the run here rather than in the code:
 
-1. **Disk.** 52 GiB free on this machine against ~790 GB of scratch. The wall
+1. **Disk.** 52 GiB free on this machine against ~255 GB of scratch. The wall
    estimate also assumes NVMe; on anything slower the I/O term dominates.
 2. **The inputs are not local.** `wg64_idx/genome.*.ht2l` is here — the 11 GB
    artifact to diff against — but `genome.fa`, `genome.snp` and

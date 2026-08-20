@@ -5,12 +5,17 @@
 #
 # HT2_LARGE=1 does the same against the 64-bit fixture set.
 #
+# HT2_SMALL=1 runs only the three sub-16 kb fixtures, which is what makes a
+# stressed configuration usable -- `HT2_SEG=7 verify_wg.sh <dir> "" 13` forces
+# dozens of segments and real spilling on a 200 bp graph, and would take hours
+# on the 900 kb ones.
+#
 # usage: verify_wg.sh <fixture_dir> [hisat2_source_dir] [budget_records]
 
 set -uo pipefail
 
 FIX=$(cd "${1:?usage: verify_wg.sh <fixture_dir> [hisat2_source_dir] [budget]}" && pwd)
-SRC=${2:-/Users/iandriver/Downloads/hisat2}
+SRC=${2:-}; [ -z "$SRC" ] && SRC=/Users/iandriver/Downloads/hisat2
 BUDGET=${3:-200000}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BIN="$HERE/ht2fmt/target/release"
@@ -24,6 +29,8 @@ CASES=(
   "tinyidx:tiny.fa:tiny.snp:tiny.haplotype"
   "xidx:tiny.fa:x.snp:x.haplotype"
   "multiidx:multi.fa:m.snp:m.haplotype"
+)
+[ -z "${HT2_SMALL:-}" ] && CASES+=(
   "cleanidx:clean.fa:clean.snp:clean.haplotype"
   "t_single:clean.fa:t_single.snp:t_single.haplotype"
   "t_insertion:clean.fa:t_insertion.snp:t_insertion.haplotype"
