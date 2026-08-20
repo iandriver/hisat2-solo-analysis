@@ -77,17 +77,29 @@ fn main() {
         if linear { linears += 1; } else { graphs += 1; }
         tot_len += len; tot_gbwt += gl;
 
+        let p_pat = p;
         let n_pat = u16a(&b5, p); p += 2 + n_pat * 2;
+        let p_frag = p;
         let n_frag = u16a(&b5, p); p += 2 + n_frag * 6;
         p += gbwt_tot;
+        let p_z = p;
         let n_z = u16a(&b5, p); p += 2 + n_z * 2;
+        let p_fchr = p;
         p += 5 * 2;                              // fchr
         p += ftab_len * 2;
         p += eftab_len * 2;
         p6 += offs_len * 2;
         if i < 3 {
-            println!("  local {i}: len {len}, gbwtLen {gl}, numNodes {nn}, {} sides, offsLen {offs_len}, {}",
-                     num_sides, if linear { "linear" } else { "graph" });
+            println!("  local {i}: tidx {_tidx} localOff {_loff} joinedOff {_joff} len {len} \
+gbwtLen {gl} numNodes {nn} eftabLen {eftab_len} nPat {n_pat} nFrag {n_frag} numZOffs {n_z} \
+sides {num_sides} offsLen {offs_len} {}", if linear { "linear" } else { "graph" });
+            if std::env::var("HT2_LDBG").is_ok() {
+                let pl = u16a(&b5, p_pat + 2);
+                let rs: Vec<usize> = (0..n_frag * 3).map(|k| u16a(&b5, p_frag + 2 + k * 2)).collect();
+                let fc: Vec<usize> = (0..5).map(|k| u16a(&b5, p_fchr + k * 2)).collect();
+                let zo: Vec<usize> = (0..n_z).map(|k| u16a(&b5, p_z + 2 + k * 2)).collect();
+                println!("        plen[0] {pl}  rstarts {rs:?}  fchr {fc:?}  zOffs {zo:?}");
+            }
         }
     }
 

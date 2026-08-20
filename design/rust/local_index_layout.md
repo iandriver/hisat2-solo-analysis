@@ -69,3 +69,48 @@ What is genuinely new is the **windowing**: splitting the reference's
 `RefRecord`s per window (`hgfm.h:2128`), which is fiddly around N runs and
 sequence boundaries, and deciding graph vs linear per window. That is the next
 piece of work, and it is bookkeeping rather than algorithm.
+
+---
+
+# Emission: it runs, and one window is byte-identical
+
+`ht2emit5` windows the reference, builds a GFM per window at `u16` width with
+`offRate` 3 and `ftabChars` 6, and byte-compares against the real files.
+
+```
+200 bp -> 1 local index
+  .5.ht2: BYTE-IDENTICAL (8,557 bytes)
+  .6.ht2: BYTE-IDENTICAL (64 bytes)
+```
+
+First try, which is the payoff for the format work already being done: the local
+index for a 200 bp reference is the *same graph* as the global one, so nothing
+but the parameters and the width changed.
+
+## Multi-window does not match yet — two distinct causes
+
+| reference | our windows | theirs |
+|---|---|---|
+| 509,431 bp, no N | 10 | 10 |
+| 900,000 bp, one 100 kb N run | **16** | **18** |
+
+**1. Windows are laid out in REFERENCE coordinates, not joined-text ones.**
+The 900,000 bp case is a 1,000,000 bp sequence with a 100,000 bp N run, and
+`ceil(1000000 / 56320) = 18` while `ceil(900000 / 56320) = 16`. The C++ accrues
+`rec.off + rec.len` per `RefRecord` — ambiguous characters included — and asserts
+exactly this count (`hgfm.h:2172`). So a window can span or even fall entirely
+inside an N run, which is what the `len == 0` early return in
+`LocalGFM::readIntoMemory` exists for.
+
+**2. Our per-window graph is slightly too large.** On the no-N reference, where
+the window count is right, the first difference is at byte 42 — `gbwtLen` of the
+first local index. Totals: ours ~527,300 GBWT rows against 525,146, roughly 200
+extra per window against ~190 variants per window, so on the order of one extra
+edge per variant. The likely cause is the haplotype admission rule at a window
+edge: `build_range` takes haplotypes with `left >= a && right < b`, and the C++
+clips its `RefRecord`s to `local_index_interval` rather than `local_index_size`
+in places (`hgfm.h:2185`), so a variant in the 1,024 bp overlap may belong to
+only one of the two windows rather than both.
+
+Both are bookkeeping in the windowing, not the index format: every byte of a
+correctly-scoped window already emits exactly.
