@@ -235,3 +235,45 @@ one single-variant haplotype each — is implemented, but **none of these
 references trigger it with the current source**, so it is untested. A denser
 variant set would be needed to exercise it, and until then it should be treated
 as unverified.
+
+## A sixth difference, found by regenerating the fixtures
+
+Rebuilding the fixture set from current source (`mkfixtures.sh`) added two cases
+the emitter had never seen — a reference carrying only insertions, and one
+carrying only deletions — and both crashed it immediately:
+
+```
+thread 'main' panicked at src/bin/ht2emit5.rs:251:16:
+index out of bounds: the len is 15360 but the index is 15360
+```
+
+**A window with no variants in it gets a *linear* local index, not a graph one.**
+`t_insertion` has 74 insertions across 509,431 bp, so two of its ten windows
+contain none; `t_deletion` has one such window. Every earlier reference either
+had variants everywhere or was a single window, so this branch had never run.
+
+The differences are the ones the format already draws between linear and graph
+mode, applied per window:
+
+| | linear window | graph window |
+|---|---|---|
+| bytes reserved per side for tallies | 4 `local_index_t` (8) | 6 `local_index_t` (12) |
+| tallies stored | `occSave[0..3]` | `F_locSave`, `M_occSave`, `occSave[0..3]` |
+| side payload | BWT only, 4 rows/byte over all 120 bytes | BWT, then F, then M |
+| `eftabLen` | fixed `ftabChars*2` = 12, zero-filled | only the entries used |
+| final ftab entry | an eftab pair ending at `gbwtLen` | a bare `gbwtLen - 1` |
+
+The crash was the third row: the graph formula puts the F bitvector at
+`(sideGbwtSz + sc) >> 1`, which for a linear side — where `sc` runs to 120
+rather than 58 — lands past the end of the side entirely.
+
+The fourth and fifth rows are the linear writer's *absorb*: rows no
+`ftabChars`-long prefix can reach (suffixes shorter than 6 characters, and the
+`$` row) are folded into the last bucket, so its entry becomes an eftab pair
+`(lastBoundary, gbwtLen)` rather than a plain boundary. The graph writer does
+not do this — checked against every graph window in the fixture set, where the
+final entry is `gbwtLen - 1` and byte-identical without any tail encoding.
+
+Reading the F and M bitvectors back as all-ones for a linear window collapses
+the graph ftab walk into the ordinary FM-index one, so the ftab construction
+needed no second code path — only the storage did.

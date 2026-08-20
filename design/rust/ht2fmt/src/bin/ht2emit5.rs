@@ -229,8 +229,13 @@ fn main() {
             let side = si / rows_per_side;
             let off = si % rows_per_side;
             if off == 0 {
-                let base = side * side_sz + side_sz - 12;
-                for (k, v) in [f_loc, m_occ, occ[0], occ[1], occ[2], occ[3]].iter().enumerate() {
+                // A linear side reserves 4 `local_index_t` for the occ tallies;
+                // a graph side reserves 6, the extra two being F_locSave and
+                // M_occSave. Both hold the counts as of the side's start.
+                let saves: &[u32] = if linear { &[occ[0], occ[1], occ[2], occ[3]] }
+                                    else { &[f_loc, m_occ, occ[0], occ[1], occ[2], occ[3]] };
+                let base = side * side_sz + side_sz - 2 * saves.len();
+                for (k, v) in saves.iter().enumerate() {
                     blk[base + k * 2..base + k * 2 + 2].copy_from_slice(&(*v as u16).to_le_bytes());
                 }
             }
@@ -245,10 +250,17 @@ fn main() {
             let base = side * side_sz;
             let sc = off >> 2; let bpi = off & 3;
             blk[base + sc] |= cc << (bpi * 2);
-            let f_sc = (side_gbwt_sz + sc) >> 1;
-            let f_bpi = bpi + ((sc & 1) << 2);
-            blk[base + f_sc] |= f << f_bpi;
-            blk[base + f_sc + (side_gbwt_sz >> 2)] |= m << f_bpi;
+            // A linear side is BWT for its whole length -- there are no F and M
+            // bitvectors, because every row is its own node. Writing them here
+            // ran off the end of the block: the linear side packs 4 rows/byte
+            // across all 120 bytes, so the graph formula's F offset lands past
+            // the side entirely.
+            if !linear {
+                let f_sc = (side_gbwt_sz + sc) >> 1;
+                let f_bpi = bpi + ((sc & 1) << 2);
+                blk[base + f_sc] |= f << f_bpi;
+                blk[base + f_sc + (side_gbwt_sz >> 2)] |= m << f_bpi;
+            }
         }
         o5.extend_from_slice(&blk);
 
@@ -263,10 +275,17 @@ fn main() {
             let side = r / rows_per_side; let off = r % rows_per_side;
             let base = side * side_sz; let sc = off >> 2; let bpi = off & 3;
             bwt[r] = (blk[base + sc] >> (bpi * 2)) & 3;
-            let f_sc = (side_gbwt_sz + sc) >> 1;
-            let f_bpi = bpi + ((sc & 1) << 2);
-            fb[r] = (blk[base + f_sc] >> f_bpi) & 1;
-            mb[r] = (blk[base + f_sc + (side_gbwt_sz >> 2)] >> f_bpi) & 1;
+            if linear {
+                // Every row is its own node, so rank_M is the identity and
+                // select_F is too -- which collapses the graph ftab walk below
+                // into the ordinary FM-index one, no separate code path needed.
+                fb[r] = 1; mb[r] = 1;
+            } else {
+                let f_sc = (side_gbwt_sz + sc) >> 1;
+                let f_bpi = bpi + ((sc & 1) << 2);
+                fb[r] = (blk[base + f_sc] >> f_bpi) & 1;
+                mb[r] = (blk[base + f_sc + (side_gbwt_sz >> 2)] >> f_bpi) & 1;
+            }
         }
         let zset: std::collections::HashSet<usize> = g.z_offs.iter().map(|&z| z as usize).collect();
         let mut occp = vec![[0u32; 4]; gl + 1];
@@ -311,6 +330,24 @@ fn main() {
             }
             ftab_o[i + 1] = tftab[i].1;
         }
+        // The graph writer stores only the eftab entries it used; the linear
+        // one reserves `ftabChars*2` and zero-fills the rest, which is why
+        // every linear local index reports eftabLen 12 exactly.
+        // The linear writer absorbs the rows no `ftabChars`-long prefix can
+        // reach -- suffixes shorter than 6 characters, and the $ row -- into
+        // the final bucket, so its last entry is an eftab pair ending at
+        // gbwtLen rather than a bare boundary. The graph writer does not: its
+        // last entry stays a plain `gbwtLen - 1` (checked against every graph
+        // window in these fixtures), which is why this is linear-only.
+        if linear && ftab_o[ftab_len - 1] != g.gbwt_len {
+            let (lo, hi) = (ftab_o[ftab_len - 1], g.gbwt_len);
+            ftab_o[ftab_len - 1] = (eftab_o.len() as u32 / 2) ^ 0xFFFF;
+            eftab_o.push(lo); eftab_o.push(hi);
+        }
+        // The graph writer stores only the eftab entries it used; the linear
+        // one reserves `ftabChars*2` and zero-fills the rest, which is why
+        // every linear local index reports eftabLen 12 exactly.
+        if linear { eftab_o.resize(2 * LOCAL_FTAB_CHARS as usize, 0); }
         for i in 0..ftab_len { put16(&mut o5, ftab_o[i]); }
         for &v in &eftab_o { put16(&mut o5, v); }
         o5[eftab_len_at..eftab_len_at + 2].copy_from_slice(&(eftab_o.len() as u16).to_le_bytes());
@@ -330,6 +367,9 @@ fn main() {
         if d == 0 && ours.len() == theirs.len() {
             println!("{name}.ht2: BYTE-IDENTICAL ({} bytes)", ours.len());
         } else {
+            // Keep the mismatching output so the differing bytes can be read
+            // back with the same parser that reads theirs.
+            let _ = fs::write(format!("{}.ours{}.ht2", a[4], name), ours.as_slice());
             println!("{name}.ht2: {} of {n} bytes match (ours {} bytes, theirs {}){}",
                      n - d, ours.len(), theirs.len(),
                      match first { Some(f) => format!("; first differing byte at {f}"), None => String::new() });

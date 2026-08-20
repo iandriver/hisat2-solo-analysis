@@ -495,3 +495,38 @@ those arrays live.
 4. chr1 against the three `analysis/hap` variant sets, matching measured retention.
 5. Alignment equivalence: SAM byte-identical at `-p 1 --seed 0 --reorder`.
 6. Whole genome, where no C++ reference output exists.
+
+## Fixtures
+
+`mkfixtures.sh <outdir>` regenerates the whole rung-3 fixture set, and
+`verify.sh <outdir>` runs every emitter against it.
+
+Each fixture input is *derived* in the script from files tracked in a git repo —
+`example/reference/22_20-21M.fa` and its variant list, plus a 200 bp
+hand-written case and `testdata/mkmulti.py` — so nothing is carried over from a
+previous fixture directory. The derivations were checked against the original
+set: all fifteen inputs reproduce byte for byte, including an `ex.snp` that had
+been lost and turned out to be the repo's own `22_20-21M.snp`.
+
+| prefix | reference | variants | exercises |
+|---|---|---|---|
+| `tinyidx` | 200 bp | 3 SNPs, 2 haplotypes | one window, one multi-variant haplotype |
+| `xidx` | 200 bp | 1 deletion | the deletion path at minimum size |
+| `multiidx` | 5 sequences, 15,700 bp | 55 SNPs | full-header refnames, leading/trailing/lowercase Ns |
+| `cleanidx` | 509,431 bp, no ambiguity | 1,881 mixed | 10 windows, no N handling |
+| `t_single` | same | 1,721 SNPs | substitutions alone |
+| `t_insertion` | same | 74 insertions | **two variant-free windows → linear local indexes** |
+| `t_deletion` | same | 86 deletions | one variant-free window |
+| `exidx` | 1,000,000 bp with a 100,000 bp N run | 3,502 mixed | 18 windows, chromosome-vs-joined coordinates |
+
+`mkfixtures.sh` rebuilds `hisat2-build-s` before it does anything else, and
+refuses to run if the binary is older than any source file beside it. That guard
+exists because the first fixture set was built by a binary months older than its
+sources: `git status` was clean, repeated builds agreed with each other, and a
+correct emitter looked wrong for two rounds of debugging. The manifest records
+the source commit and the builder's hash next to the fixtures for the same
+reason.
+
+Regenerating the set immediately paid for itself — the two variant-free-window
+cases had never been built before, and both crashed the emitter. See
+`local_index_layout.md`.
