@@ -38,6 +38,11 @@ struct Run { chrom_off: u32, joined_off: u32, len: u32 }
 /// so the fragmented builder can construct one range at a time from it without
 /// re-reading or re-parsing.
 pub struct Parsed {
+    /// per sequence: name, full length including ambiguous, and the maximal
+    /// unambiguous runs as (chrom_off, joined_off, len). Local index windows are
+    /// laid out in CHROM coordinates, so the mapping is needed to find which
+    /// joined bases a window covers.
+    pub seqs: Vec<(String, u32, Vec<(u32, u32, u32)>)>,
     pub text: Vec<u8>,
     pub alts: Vec<Alt>,
     pub haps: Vec<Hap>,
@@ -52,8 +57,13 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     let mut cur = String::new();
     let mut chrom_off: u32 = 0;
     let mut in_run = false;
+    // the true length of each sequence, ambiguity included -- runs only record
+    // the unambiguous stretches, so a sequence ending in N would look short
+    let mut plen: Vec<(String, u32)> = Vec::new();
     for line in fs::read_to_string(fa).expect("fa").lines() {
         if let Some(rest) = line.strip_prefix('>') {
+            // close the previous sequence before adopting the new name
+            if !cur.is_empty() { plen.push((cur.clone(), chrom_off)); }
             cur = rest.split_whitespace().next().unwrap_or("").to_string();
             runs.entry(cur.clone()).or_default();
             chrom_off = 0;
@@ -124,7 +134,15 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
             _ => dropped_haps += 1,
         }
     }
-    Parsed { text, alts, haps, dropped_snps, dropped_haps, out_of_order_haps: 0 }
+    if !cur.is_empty() { plen.push((cur.clone(), chrom_off)); }
+    let mut seqs: Vec<(String, u32, Vec<(u32, u32, u32)>)> = Vec::new();
+    for (name, full) in plen.iter() {
+        let rs: Vec<(u32, u32, u32)> = runs.get(name)
+            .map(|v| v.iter().map(|r| (r.chrom_off, r.joined_off, r.len)).collect())
+            .unwrap_or_default();
+        seqs.push((name.clone(), *full, rs));
+    }
+    Parsed { seqs, text, alts, haps, dropped_snps, dropped_haps, out_of_order_haps: 0 }
 }
 
 /// Build the nodes and edges for reference range `[a, b)` with LOCAL indices:

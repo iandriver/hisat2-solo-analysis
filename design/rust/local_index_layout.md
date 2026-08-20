@@ -165,3 +165,73 @@ and compare, rather than infer.
 | `.2.ht2` | fully reproduced |
 | `.3`/`.4.ht2` | reproduced since rung 2 |
 | `.5`/`.6.ht2` | layout parses exactly to 55,172 local indexes; emission byte-identical for a window that does not explode; windowing coordinate space and per-window variant admission still open |
+
+
+---
+
+# Done: `.5`/`.6` byte-identical
+
+| reference | local indexes | `.5` | `.6` |
+|---|---|---|---|
+| 200 bp, 3 variants | 1 | **8,557** | **64** |
+| 509,431 bp, 1,881 variants | 10 | **379,985** | **133,988** |
+| 900,000 bp + 100 kb N run | 18 | **678,141** | **238,400** |
+| 5 sequences, 55 variants | 5 | **50,605** | **4,020** |
+
+All exact. With `.1`–`.4` already byte-identical, **the whole index is now
+reproduced**.
+
+## The thing that cost the most time was not a bug in the code
+
+The fixtures were built by a **stale `hisat2-build-s`**. The fork's binary dates
+from 13 August and its sources have moved since; `git status` is clean, so
+nothing looked wrong. Rebuilding from the same tree produces a *different*
+`.5.ht2` — 379,985 bytes against the fixture's 372,925, and a different number of
+local-graph explosions.
+
+That sent the earlier diagnosis badly wrong. "Our per-window graph is too large"
+was measured against an index built by different code. The instrumented build
+settled it in one line:
+
+```
+@@LOCAL off=0 len=57344 nalts=269 nhaps=269 bsCur=269 exploded=0 ranks=59769
+```
+
+`nalts=269` and `ranks=59769` were **exactly our numbers**, and `exploded=0`.
+The graph had been right the whole time.
+
+**Lesson worth keeping: verify the reference output is reproducible before
+treating a mismatch as a bug.** Two runs of the same binary agreeing is not
+enough — the binary has to match the source you are reading.
+
+## The five real differences, all in the windowing
+
+1. **Windows are laid out in chromosome coordinates**, ambiguity included. A
+   1,000,000 bp sequence with a 100,000 bp N run gets 18 windows, not the 16 its
+   900,000 joined bases suggest.
+2. **Haplotypes index the full alt list**, so restricting alts to a window means
+   remapping every haplotype's indices — `alt_map` in the C++. Without it a
+   haplotype in window 1 still points at a global index and reads off the end.
+3. **Local indexes are built in local coordinates** (`pos -= curr_sztot`).
+   Window 0 cannot detect this, which is why a single-window reference matched
+   long before the rest.
+4. **`plen` is the window's chromosome span, not its unambiguous length** —
+   57,344 where `len` is 2,551. The same relationship the global index has
+   between `plen` 1,000,000 and `len` 900,000, and again only visible with Ns.
+5. **`rstarts` carries one record per unambiguous stretch in the window**, as
+   (offset in the window's joined text, sequence, offset in the window's
+   pattern). The window straddling this reference's gap opens 46,231 bases into
+   its own pattern.
+
+Every one of these is invisible on a reference with no N runs and one window,
+which is exactly why the ladder's habit of adding a more awkward input keeps
+earning its cost.
+
+## Implemented but not exercised
+
+The explosion path — `ExplosionException` at `local_max_gbwt`, the binary search
+over variant count, and `selectAlts` keeping `k` evenly-spaced variants with
+one single-variant haplotype each — is implemented, but **none of these
+references trigger it with the current source**, so it is untested. A denser
+variant set would be needed to exercise it, and until then it should be treated
+as unverified.

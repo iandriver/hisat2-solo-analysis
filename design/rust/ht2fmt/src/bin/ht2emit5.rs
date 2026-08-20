@@ -53,8 +53,33 @@ fn main() {
     }
     let p = graph::parse(&a[1], &a[2], &a[3]);
     let len = p.text.len() as u32;
-    let n_windows = ((len + LOCAL_INTERVAL - 1) / LOCAL_INTERVAL).max(1);
-    println!("{len} bp -> {n_windows} local index(es) of up to {LOCAL_SIZE} bp");
+    // Windows are laid out in CHROMOSOME coordinates, ambiguity included --
+    // hgfm.h accrues rec.off + rec.len per RefRecord and asserts the count at
+    // :2172. A 1,000,000 bp sequence with a 100,000 bp N run therefore gets 18
+    // windows, not the 16 its 900,000 joined bases would suggest.
+    let mut plan: Vec<(u32, u32, u32, u32, u32)> = Vec::new(); // tidx, cstart, joined_start, wlen(joined), chrom_len
+    for (ti, (_name, full, runs)) in p.seqs.iter().enumerate() {
+        let nw = ((*full + LOCAL_INTERVAL - 1) / LOCAL_INTERVAL).max(1);
+        for w in 0..nw {
+            let cs = w * LOCAL_INTERVAL;
+            let ce = (cs + LOCAL_SIZE).min(*full);
+            // joined bases covered by chrom range [cs, ce)
+            let mut jstart = u32::MAX;
+            let mut cnt = 0u32;
+            for &(co, jo, rl) in runs.iter() {
+                let lo = co.max(cs);
+                let hi = (co + rl).min(ce);
+                if lo < hi {
+                    if jstart == u32::MAX { jstart = jo + (lo - co); }
+                    cnt += hi - lo;
+                }
+            }
+            if jstart == u32::MAX { jstart = 0; }
+            plan.push((ti as u32, cs, jstart, cnt, *full));
+        }
+    }
+    let n_windows = plan.len() as u32;
+    println!("{len} joined bp over {} sequence(s) -> {n_windows} local index(es)", p.seqs.len());
 
     let ftab_len = (1usize << (2 * LOCAL_FTAB_CHARS)) + 1;
     let side_sz = 1usize << LOCAL_LINE_RATE;
@@ -70,31 +95,57 @@ fn main() {
     put32(&mut o5, (-1i32) as u32);
     put32(&mut o6, 1);
 
-    for w in 0..n_windows {
-        let a0 = w * LOCAL_INTERVAL;
-        let b0 = (a0 + LOCAL_SIZE).min(len);
-        let wlen = b0 - a0;
+    for (w, &(tidx, cstart, a0, wlen, _full)) in plan.iter().enumerate() {
+        let w = w as u32;
+        let b0 = a0 + wlen;
+        let wtext: Vec<u8> = p.text[a0 as usize..b0 as usize].to_vec();
+        if wlen == 0 {
+            // a window entirely inside an N run: header only, which is what the
+            // `len == 0` early return in LocalGFM::readIntoMemory is for
+            put32(&mut o5, tidx); put32(&mut o5, cstart); put32(&mut o5, a0);
+            put16(&mut o5, 0); put16(&mut o5, 0); put16(&mut o5, 0); put16(&mut o5, 0);
+            println!("  window {w}: chrom {cstart}, empty (inside an N run)");
+            continue;
+        }
         // graph over just this window; the same construction as the global one
         // A local graph that grows past local_max_gbwt nodes is thrown away and
         // rebuilt from a thinned variant set; hgfm.h:1954 binary-searches for the
         // largest set that fits. tiny.log shows zero explosions, which is why a
         // single window matched without any of this; clean.log shows 13.
-        let orig: Vec<graph::Alt> = p.alts.iter()
-            .filter(|x| x.pos >= a0 && x.pos < b0)
-            .map(|x| graph::Alt { pos: x.pos, len: x.len, seq: x.seq, typ: x.typ })
-            .collect();
+        // Haplotypes index into the FULL alt list, so restricting the alts to a
+        // window means remapping every haplotype's indices -- `alt_map` in the
+        // C++ (hgfm.h:2337). Without it a haplotype in window 1 still points at
+        // a global alt index and reads off the end.
+        let mut alt_map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut orig: Vec<graph::Alt> = Vec::new();
+        for (gi, x) in p.alts.iter().enumerate() {
+            let keep = match x.typ {
+                graph::ALT_DEL => x.pos >= a0 && x.pos + x.len <= b0,
+                _              => x.pos >= a0 && x.pos < b0,
+            };
+            if keep {
+                alt_map.insert(gi as u32, orig.len() as u32);
+                // LOCAL coordinates: the C++ does `alts.back().pos -= curr_sztot`
+                // (hgfm.h:2355), so a local index is built over a window that
+                // starts at 0. Window 0 cannot tell the difference.
+                orig.push(graph::Alt { pos: x.pos - a0, len: x.len, seq: x.seq, typ: x.typ });
+            }
+        }
         let mut alts: Vec<graph::Alt> = orig.iter()
             .map(|x| graph::Alt { pos: x.pos, len: x.len, seq: x.seq, typ: x.typ }).collect();
         let mut haps: Vec<graph::Hap> = p.haps.iter()
             .filter(|h| h.left >= a0 && h.right < b0)
-            .map(|h| graph::Hap { left: h.left, right: h.right, alts: h.alts.clone() })
+            .filter_map(|h| {
+                let m: Option<Vec<u32>> = h.alts.iter().map(|a| alt_map.get(a).copied()).collect();
+                m.map(|alts| graph::Hap { left: h.left - a0, right: h.right - a0, alts })
+            })
             .collect();
         let (mut bs_active, mut bs_lo, mut bs_hi) = (false, 0usize, 0usize);
         let mut bs_cur = alts.len();
         let mut dropped = 0usize;
         let g;
         loop {
-            let (n, e, _) = graph::build_range_with(&p.text, &alts, &haps, a0, b0, true, true);
+            let (n, e, _) = graph::build_range_with(&wtext, &alts, &haps, 0, wlen, true, true);
             let (gn, ge, last) = graph::reverse_determinize(&n, &e, wlen + 1);
             let built = gfmbuild::build_gfm(&gn, &ge, last, wlen, LOCAL_OFF_RATE, LOCAL_MAX_GBWT);
             let exploded = match &built {
@@ -129,8 +180,9 @@ fn main() {
         let rows_per_side = if linear { side_gbwt_sz * 4 } else { side_gbwt_sz * 2 };
         let gbwt_tot = num_sides * side_sz;
 
-        put32(&mut o5, 0);          // tidx -- single-sequence references only here
-        put32(&mut o5, a0);         // localOffset
+        let sect_at = o5.len();
+        put32(&mut o5, tidx);
+        put32(&mut o5, cstart);     // localOffset -- chromosome coordinates
         put32(&mut o5, a0);         // joinedOffset
         put16(&mut o5, g.len);
         put16(&mut o5, g.gbwt_len);
@@ -138,8 +190,26 @@ fn main() {
         // eftabLen is discovered below, so remember where to patch it
         let eftab_len_at = o5.len();
         put16(&mut o5, 0);
-        put16(&mut o5, 1); put16(&mut o5, wlen);            // nPat, plen
-        put16(&mut o5, 1); put16(&mut o5, 0); put16(&mut o5, 0); put16(&mut o5, a0); // nFrag, rstarts
+        // plen is the window's CHROMOSOME span, ambiguity included -- the same
+        // relationship the global index has, where plen[0] is 1,000,000 while
+        // len is 900,000. Only a reference with N runs can tell them apart.
+        let cspan = (cstart + LOCAL_SIZE).min(_full) - cstart;
+        put16(&mut o5, 1); put16(&mut o5, cspan);           // nPat, plen
+        // rstarts, local: one record per unambiguous stretch inside the window,
+        // as (offset in the window's joined text, sequence, offset in the
+        // window's pattern). A window that opens inside an N run has a non-zero
+        // third field -- 46,231 for the one that straddles this reference's gap.
+        let ce = cstart + cspan;
+        let mut frags: Vec<(u32, u32, u32)> = Vec::new();
+        let mut jacc = 0u32;
+        for &(co, _jo, rl) in p.seqs[tidx as usize].2.iter() {
+            let lo = co.max(cstart);
+            let hi = (co + rl).min(ce);
+            if lo < hi { frags.push((jacc, 0, lo - cstart)); jacc += hi - lo; }
+        }
+        if frags.is_empty() { frags.push((0, 0, 0)); }
+        put16(&mut o5, frags.len() as u32);
+        for &(j, t, c) in &frags { put16(&mut o5, j); put16(&mut o5, t); put16(&mut o5, c); }
 
         // ---- gbwt block ----
         let mut blk = vec![0u8; gbwt_tot];
@@ -246,7 +316,7 @@ fn main() {
         o5[eftab_len_at..eftab_len_at + 2].copy_from_slice(&(eftab_o.len() as u16).to_le_bytes());
 
         for &s in &g.sa_sample { put16(&mut o6, s); }
-        println!("  window {w}: [{a0},{b0}) len {} gbwtLen {} numNodes {} eftabLen {} sides {} offs {}",
+        println!("  window {w}: @{sect_at} chrom {cstart} joined [{a0},{b0}) len {} gbwtLen {} numNodes {} eftabLen {} sides {} offs {}",
                  g.len, g.gbwt_len, g.num_nodes, eftab_o.len(), num_sides, g.sa_sample.len());
     }
     o5.push(0);
