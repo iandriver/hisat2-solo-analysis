@@ -207,28 +207,21 @@ fn seg_indices(base: &Path) -> Vec<usize> {
     out
 }
 
-/// Delete every segment of `base`, including any left behind a hole.
+/// Delete every segment of `base`, holes and all.
 ///
-/// Costs one directory listing, so it is for the handful of long-lived bases a
-/// consuming reader may have left part-way through. Everything else uses
-/// `seg_truncate`.
+/// Always a directory listing, never a forward walk from zero. Two different
+/// readers leave two different hole patterns -- a consuming `SegReader` eats a
+/// prefix, and the partitioned merge frees a SPARSE set, because each worker
+/// keeps whichever segment straddles the end of its range. Any walk that stops
+/// at a gap leaves segments behind, the next sort reuses these names, and a
+/// stale `run3.bin.s00005` becomes part of a new run3. That is not a leak, it is
+/// records from another generation merged in as though they belonged: 207 path
+/// nodes where there should be 204, and 193 edges where there should be 204.
+///
+/// A cheaper version was measured and made no difference (67.4s against 66.2s,
+/// inside the noise), so there is no version of this that stops early.
 pub fn seg_remove(base: &Path) {
-    if seg_path(base, 0).exists() {
-        // fast path first: a fully-written base has no hole
-        let mut i = 0usize;
-        while std::fs::remove_file(seg_path(base, i)).is_ok() { i += 1; }
-        if !seg_path(base, i + 1).exists() { return; }
-    }
     for i in seg_indices(base) { let _ = std::fs::remove_file(seg_path(base, i)); }
-}
-
-/// Delete a base's segments from the front, stopping at the first gap.
-///
-/// No directory listing, so it is cheap enough to call before every run file --
-/// and correct for them, because a run is either untouched or fully consumed.
-pub fn seg_truncate(base: &Path) {
-    let mut i = 0usize;
-    while std::fs::remove_file(seg_path(base, i)).is_ok() { i += 1; }
 }
 
 /// Total records across every segment.
@@ -269,7 +262,7 @@ impl SegWriter {
     /// exactly the files a merge needs to shrink. Callers that write short files
     /// pass their own cap.
     pub fn create_cap(base: &Path, cap: usize) -> std::io::Result<SegWriter> {
-        seg_truncate(base);
+        seg_remove(base);
         Ok(SegWriter { base: base.to_path_buf(), seg: 0, in_seg: 0, cap: cap.max(1),
                        w: Some(RecWriter::create(&seg_path(base, 0))?), n: 0 })
     }
@@ -500,7 +493,7 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path,
             if group.len() == 1 { next.push(group[0].clone()); continue; }
             let out = tmp.join(format!("merge{pass}_{gi}.bin"));
             merge_runs(group, &out, by, budget)?;
-            for p in group { seg_truncate(p); }
+            for p in group { seg_remove(p); }
             next.push(out);
         }
         runs = next;
@@ -514,7 +507,7 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path,
         merge_runs_seg_par(&runs, dst, by, budget, nthreads)?
     } else {
         let n = merge_runs_seg(&runs, dst, by, budget)?;
-        for p in &runs { seg_truncate(p); }
+        for p in &runs { seg_remove(p); }
         n
     };
     Ok(n)
@@ -529,7 +522,7 @@ fn merge_runs_seg(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::i
     for i in 0..rds.len() {
         match rds[i].as_mut().unwrap().next()? {
             Some(r) => heap.push(HeapItem { key: keyof(&r, by), idx: i, rec: r }),
-            None => { rds[i] = None; seg_truncate(&runs[i]); }
+            None => { rds[i] = None; seg_remove(&runs[i]); }
         }
     }
     let mut w = SegWriter::create(dst)?;
@@ -538,7 +531,7 @@ fn merge_runs_seg(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::i
         let i = it.idx;
         match rds[i].as_mut().unwrap().next()? {
             Some(r) => heap.push(HeapItem { key: keyof(&r, by), idx: i, rec: r }),
-            None => { rds[i] = None; seg_truncate(&runs[i]); }
+            None => { rds[i] = None; seg_remove(&runs[i]); }
         }
     }
     w.finish()
@@ -552,12 +545,19 @@ struct SegIndex { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pub len: u6
 
 impl SegIndex {
     fn open(base: &Path) -> std::io::Result<SegIndex> {
-        let segs = seg_indices(base);
-        let mut starts = Vec::with_capacity(segs.len() + 1);
+        // Empty segments are dropped, not indexed. They make `starts` repeat a
+        // value, and then a binary search for that record can land on the empty
+        // one and read nothing -- which is how a partitioned merge silently
+        // loses records.
+        let mut segs = Vec::new();
+        let mut starts = Vec::new();
         let mut acc = 0u64;
-        for &i in &segs {
+        for i in seg_indices(base) {
+            let n = std::fs::metadata(seg_path(base, i))?.len() / REC as u64;
+            if n == 0 { continue; }
+            segs.push(i);
             starts.push(acc);
-            acc += std::fs::metadata(seg_path(base, i))?.len() / REC as u64;
+            acc += n;
         }
         starts.push(acc);
         Ok(SegIndex { base: base.to_path_buf(), segs, starts, len: acc })
@@ -585,14 +585,27 @@ impl SegIndex {
 }
 
 /// Sequential reader over records `[from, to)` of a segmented run.
+///
+/// `consume` is wired but always false, and the comment is the point. Freeing a
+/// segment on the way past looks safe -- a segment is finished by exactly one
+/// worker, the last whose range reaches its end, and anyone starting later
+/// starts at or past that boundary -- and it would take the parallel merge's
+/// peak scratch back down by a quarter. It does not hold in practice: with the
+/// freeing on, the fixtures diverge at high thread counts in ways that move
+/// around when the partition count changes. Two real hazards turned up while
+/// chasing it and are fixed above (`seg_remove` scanning rather than walking,
+/// and empty partitions never being spliced in), but neither was the whole of
+/// it, and a merge that loses records is not worth a quarter of the disk.
 struct SegSlice { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pos: u64, end: u64,
-                  cur: Option<RecReader>, seg: usize }
+                  cur: Option<RecReader>, seg: usize, consume: bool }
 
 impl SegSlice {
-    fn new(ix: &SegIndex, from: u64, to: u64, cap: usize) -> std::io::Result<SegSlice> {
+    fn new(ix: &SegIndex, from: u64, to: u64, cap: usize, consume: bool)
+        -> std::io::Result<SegSlice>
+    {
         let mut s = SegSlice { base: ix.base.clone(), segs: ix.segs.clone(),
                                starts: ix.starts.clone(), pos: from, end: to,
-                               cur: None, seg: usize::MAX };
+                               cur: None, seg: usize::MAX, consume };
         s.seek(cap)?;
         Ok(s)
     }
@@ -616,8 +629,13 @@ impl SegSlice {
                 Some(r) => match r.next()? {
                     Some(x) => { self.pos += 1; return Ok(Some(x)); }
                     None => {
+                        // close before unlinking, so the space comes back now
+                        self.cur = None;
+                        if self.consume && self.starts[self.seg + 1] <= self.end {
+                            let _ = std::fs::remove_file(seg_path(&self.base, self.segs[self.seg]));
+                        }
                         self.seg += 1;
-                        if self.seg >= self.segs.len() { self.cur = None; return Ok(None); }
+                        if self.seg >= self.segs.len() { return Ok(None); }
                         self.cur = Some(RecReader::open_buf(
                             &seg_path(&self.base, self.segs[self.seg]), cap)?);
                     }
@@ -694,7 +712,8 @@ fn merge_runs_seg_par(runs: &[PathBuf], dst: &Path, by: By, budget: usize, nthre
                     let r = (|| -> std::io::Result<u64> {
                         let mut rds: Vec<Option<SegSlice>> = Vec::with_capacity(ix.len());
                         for r in 0..ix.len() {
-                            rds.push(Some(SegSlice::new(&ix[r], bounds[p][r], bounds[p + 1][r], cap)?));
+                            rds.push(Some(SegSlice::new(&ix[r], bounds[p][r], bounds[p + 1][r],
+                                                        cap, false)?));
                         }
                         let mut heap: BinaryHeap<HeapItem> = BinaryHeap::new();
                         for i in 0..rds.len() {
@@ -724,10 +743,16 @@ fn merge_runs_seg_par(runs: &[PathBuf], dst: &Path, by: By, budget: usize, nthre
     seg_remove(dst);
     let mut n = 0u64;
     for p in 0..nparts {
+        let c = counts[p].load(std::sync::atomic::Ordering::Relaxed);
+        // An empty partition still leaves a zero-length segment behind, and
+        // splicing that into the middle of `dst` gives the next reader a
+        // repeated boundary to binary-search. There are plenty of empty
+        // partitions whenever the thread count outruns the distinct keys.
+        if c == 0 { seg_remove(&parts[p]); continue; }
         seg_append(dst, &parts[p])?;
-        n += counts[p].load(std::sync::atomic::Ordering::Relaxed);
+        n += c;
     }
-    for p in runs { seg_truncate(p); }
+    for p in runs { seg_remove(p); }
     Ok(n)
 }
 
@@ -748,7 +773,7 @@ fn merge_runs(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::io::R
     for i in 0..rds.len() {
         match rds[i].as_mut().unwrap().next()? {
             Some(r) => heap.push(HeapItem { key: keyof(&r, by), idx: i, rec: r }),
-            None => { rds[i] = None; seg_truncate(&runs[i]); }
+            None => { rds[i] = None; seg_remove(&runs[i]); }
         }
     }
     let mut w = SegWriter::create(dst)?;
@@ -759,7 +784,7 @@ fn merge_runs(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::io::R
             Some(r) => heap.push(HeapItem { key: keyof(&r, by), idx: i, rec: r }),
             // dropping the reader closes the file, so the unlink frees the space
             // now rather than at process exit
-            None => { rds[i] = None; seg_truncate(&runs[i]); }
+            None => { rds[i] = None; seg_remove(&runs[i]); }
         }
     }
     w.finish()
