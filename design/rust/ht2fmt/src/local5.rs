@@ -46,14 +46,14 @@ fn put32(v: &mut Vec<u8>, x: u32) { v.extend_from_slice(&x.to_le_bytes()); }
 /// patch it and then written. A whole-genome `.5.ht2` is several GB and cannot
 /// be assembled in memory.
 pub fn emit<W5: Write, W6: Write>(p: &graph::Parsed, w5: &mut W5, w6: &mut W6,
-                                  w: usize, verbose: bool)
+                                  width: usize, verbose: bool)
     -> std::io::Result<()>
 {
     // A local index is `local_index_t` = u16 throughout whatever the global
     // index width is, so only four fields change between `.5.ht2` and
     // `.5.ht2l`: the local-index count, and each window's tidx, localOffset and
     // joinedOffset.
-    let put_idx = |v: &mut Vec<u8>, x: u32| v.extend_from_slice(&(x as u64).to_le_bytes()[0..w]);
+    let put_idx = |v: &mut Vec<u8>, x: u32| v.extend_from_slice(&(x as u64).to_le_bytes()[0..width]);
     let len = p.text.len() as u32;
     // Windows are laid out in CHROMOSOME coordinates, ambiguity included --
     // hgfm.h accrues rec.off + rec.len per RefRecord and asserts the count at
@@ -85,9 +85,6 @@ pub fn emit<W5: Write, W6: Write>(p: &graph::Parsed, w5: &mut W5, w6: &mut W6,
         println!("{len} joined bp over {} sequence(s) -> {n_windows} local index(es)", p.seqs.len());
     }
 
-    let ftab_len = (1usize << (2 * LOCAL_FTAB_CHARS)) + 1;
-    let side_sz = 1usize << LOCAL_LINE_RATE;
-
     let mut hdr: Vec<u8> = Vec::new();
     put32(&mut hdr, 1);
     put_idx(&mut hdr, n_windows);
@@ -99,11 +96,23 @@ pub fn emit<W5: Write, W6: Write>(p: &graph::Parsed, w5: &mut W5, w6: &mut W6,
     w5.write_all(&hdr)?;
     w6.write_all(&1u32.to_le_bytes())?;
     let mut off5 = hdr.len();
-    let mut sec: Vec<u8> = Vec::new();
 
-    for (w, &(tidx, cstart, a0, wlen, _full)) in plan.iter().enumerate() {
-        let w = w as u32;
-        sec.clear();
+
+/// One local index: its `.5` section and its `.6` samples.
+///
+/// Depends on nothing but the parsed reference and this window's own plan entry
+/// -- no shared state, no ordering constraint -- which is what lets the whole
+/// stage run one window per core. `hgfm.h` threads exactly this loop.
+struct WinOut { sec: Vec<u8>, sa: Vec<u8>, note: String }
+
+fn build_window(p: &graph::Parsed, (tidx, cstart, a0, wlen, _full): (u32, u32, u32, u32, u32),
+                width: usize) -> WinOut
+{
+    let put_idx = |v: &mut Vec<u8>, x: u32| v.extend_from_slice(&(x as u64).to_le_bytes()[0..width]);
+    let ftab_len = (1usize << (2 * LOCAL_FTAB_CHARS)) + 1;
+    let side_sz = 1usize << LOCAL_LINE_RATE;
+    let mut sec: Vec<u8> = Vec::new();
+    let mut sa: Vec<u8> = Vec::new();
         let b0 = a0 + wlen;
         let wtext: Vec<u8> = p.text[a0 as usize..b0 as usize].to_vec();
         if wlen == 0 {
@@ -111,9 +120,7 @@ pub fn emit<W5: Write, W6: Write>(p: &graph::Parsed, w5: &mut W5, w6: &mut W6,
             // `len == 0` early return in LocalGFM::readIntoMemory is for
             put_idx(&mut sec, tidx); put_idx(&mut sec, cstart); put_idx(&mut sec, a0);
             put16(&mut sec, 0); put16(&mut sec, 0); put16(&mut sec, 0); put16(&mut sec, 0);
-            if verbose { println!("  window {w}: chrom {cstart}, empty (inside an N run)"); }
-            w5.write_all(&sec)?; off5 += sec.len();
-            continue;
+            return WinOut { sec, sa, note: format!("chrom {cstart}, empty (inside an N run)") };
         }
         // graph over just this window; the same construction as the global one
         // A local graph that grows past local_max_gbwt nodes is thrown away and
@@ -188,7 +195,6 @@ pub fn emit<W5: Write, W6: Write>(p: &graph::Parsed, w5: &mut W5, w6: &mut W6,
         let rows_per_side = if linear { side_gbwt_sz * 4 } else { side_gbwt_sz * 2 };
         let gbwt_tot = num_sides * side_sz;
 
-        let sect_at = off5;
         put_idx(&mut sec, tidx);
         put_idx(&mut sec, cstart);     // localOffset -- chromosome coordinates
         put_idx(&mut sec, a0);         // joinedOffset
@@ -360,12 +366,76 @@ pub fn emit<W5: Write, W6: Write>(p: &graph::Parsed, w5: &mut W5, w6: &mut W6,
         for &v in &eftab_o { put16(&mut sec, v); }
         sec[eftab_len_at..eftab_len_at + 2].copy_from_slice(&(eftab_o.len() as u16).to_le_bytes());
 
-        for &s in &g.sa_sample { w6.write_all(&(s as u16).to_le_bytes())?; }
-        if verbose {
-            println!("  window {w}: @{sect_at} chrom {cstart} joined [{a0},{b0}) len {} gbwtLen {} numNodes {} eftabLen {} sides {} offs {}",
-                     g.len, g.gbwt_len, g.num_nodes, eftab_o.len(), num_sides, g.sa_sample.len());
+        for &s in &g.sa_sample { sa.extend_from_slice(&(s as u16).to_le_bytes()); }
+        let note = format!("chrom {cstart} joined [{a0},{b0}) len {} gbwtLen {} numNodes {} eftabLen {} sides {} offs {}",
+                           g.len, g.gbwt_len, g.num_nodes, eftab_o.len(), num_sides, g.sa_sample.len());
+        WinOut { sec, sa, note }
+}
+
+    // One window per core. Results are handed to the writer in window order,
+    // and dispatch is held within `cap` windows of whatever is being written
+    // next, so at most that many sections are ever resident -- a few MB -- and
+    // the window the writer is waiting for is always already in flight.
+    let threads = super::ext::threads().min(plan.len().max(1));
+    if threads <= 1 {
+        for (w, &e) in plan.iter().enumerate() {
+            let o = build_window(p, e, width);
+            if verbose { println!("  window {w}: @{off5} {}", o.note); }
+            w5.write_all(&o.sec)?; off5 += o.sec.len();
+            w6.write_all(&o.sa)?;
         }
-        w5.write_all(&sec)?; off5 += sec.len();
+    } else {
+        use std::collections::BTreeMap;
+        use std::sync::{Condvar, Mutex};
+        struct State { dispatch: usize, write: usize, done: BTreeMap<usize, WinOut> }
+        let cap = threads * 2;
+        let n = plan.len();
+        let st = Mutex::new(State { dispatch: 0, write: 0, done: BTreeMap::new() });
+        let cv = Condvar::new();
+        let (st, cv, plan_ref) = (&st, &cv, &plan);
+        let mut err: Option<std::io::Error> = None;
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(move || loop {
+                    let i = {
+                        let mut g = st.lock().unwrap();
+                        while g.dispatch >= g.write + cap && g.dispatch < n {
+                            g = cv.wait(g).unwrap();
+                        }
+                        if g.dispatch >= n { return; }
+                        let i = g.dispatch; g.dispatch += 1; i
+                    };
+                    let o = build_window(p, plan_ref[i], width);
+                    let mut g = st.lock().unwrap();
+                    g.done.insert(i, o);
+                    cv.notify_all();
+                });
+            }
+            // the writer, on this thread, so `w5`/`w6` need not be Send
+            for w in 0..n {
+                let o = {
+                    let mut g = st.lock().unwrap();
+                    loop {
+                        if let Some(o) = g.done.remove(&w) { break o; }
+                        g = cv.wait(g).unwrap();
+                    }
+                };
+                {
+                    let mut g = st.lock().unwrap();
+                    g.write = w + 1;
+                    cv.notify_all();
+                }
+                if verbose { println!("  window {w}: @{off5} {}", o.note); }
+                if let Err(e) = w5.write_all(&o.sec) { err = Some(e); break; }
+                off5 += o.sec.len();
+                if let Err(e) = w6.write_all(&o.sa) { err = Some(e); break; }
+            }
+            // let any parked worker out if the writer bailed
+            let mut g = st.lock().unwrap();
+            g.write = n; g.dispatch = n;
+            cv.notify_all();
+        });
+        if let Some(e) = err { return Err(e); }
     }
     // the file ends with a single '\0' (`fout5 << '\0'`)
     w5.write_all(&[0])?;
