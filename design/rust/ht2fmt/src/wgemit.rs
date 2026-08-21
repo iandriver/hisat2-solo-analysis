@@ -613,25 +613,94 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
 {
     let ftab_len = (1usize << (ftab_chars * 2)) + 1;
     let mut tftab: Vec<(u64, u64)> = vec![(u64::MAX, u64::MAX); ftab_len - 1];
-    let mut buf = vec![0u8; nav.g.side_sz];
-    let mut steps = 0u64;
 
-    // (top, bot, depth, low bits of i fixed so far)
-    let mut stack: Vec<(u64, u64, u32, usize)> = vec![(0, nav.gbwt_len, 0, 0)];
-    while let Some((top, bot, depth, bits)) = stack.pop() {
-        for c in 0..4usize {
-            steps += 1;
-            match nav.step(top, bot, c, &mut buf)? {
-                None => {}                       // whole subtree is degenerate
-                Some((t, b)) => {
-                    let nbits = bits | (c << (2 * depth));
-                    if depth + 1 == ftab_chars { tftab[nbits] = (t, b); }
-                    else { stack.push((t, b, depth + 1, nbits)); }
+    /// One subtree, depth-first. Results come back as `(index, top, bot)`
+    /// rather than being written in place: a subtree owns the indices whose low
+    /// bits match its prefix, and those are STRIDED through `tftab`, not
+    /// contiguous, so there is no slice to hand a worker.
+    fn walk(nav: &Nav, ftab_chars: u32, root: (u64, u64, u32, usize),
+            out: &mut Vec<(u32, u64, u64)>, buf: &mut [u8]) -> std::io::Result<u64> {
+        let mut steps = 0u64;
+        let mut stack: Vec<(u64, u64, u32, usize)> = vec![root];
+        while let Some((top, bot, depth, bits)) = stack.pop() {
+            for c in 0..4usize {
+                steps += 1;
+                match nav.step(top, bot, c, buf)? {
+                    None => {}                       // whole subtree is degenerate
+                    Some((t, b)) => {
+                        let nbits = bits | (c << (2 * depth));
+                        if depth + 1 == ftab_chars { out.push((nbits as u32, t, b)); }
+                        else { stack.push((t, b, depth + 1, nbits)); }
+                    }
                 }
             }
         }
+        Ok(steps)
     }
-    if verbose { println!("  ftab: {steps} LF steps over the trie (flat walk would be {})",
+
+    // Expand the first few levels here, then hand each surviving node to a
+    // worker. Every subtree is an independent read-only walk over the block, so
+    // this is the one stage where more cores buy queue depth as well as CPU.
+    const FANOUT_DEPTH: u32 = 3;
+    let mut buf = vec![0u8; nav.g.side_sz];
+    let mut steps = 0u64;
+    let mut roots: Vec<(u64, u64, u32, usize)> = vec![(0, nav.gbwt_len, 0, 0)];
+    let mut leaves: Vec<(u32, u64, u64)> = Vec::new();
+    for _ in 0..FANOUT_DEPTH.min(ftab_chars) {
+        let mut next = Vec::new();
+        for &(top, bot, depth, bits) in &roots {
+            for c in 0..4usize {
+                steps += 1;
+                if let Some((t, b)) = nav.step(top, bot, c, &mut buf)? {
+                    let nbits = bits | (c << (2 * depth));
+                    if depth + 1 == ftab_chars { leaves.push((nbits as u32, t, b)); }
+                    else { next.push((t, b, depth + 1, nbits)); }
+                }
+            }
+        }
+        roots = next;
+    }
+
+    let threads = crate::ext::threads().min(roots.len().max(1));
+    if threads <= 1 {
+        for &r in &roots { steps += walk(nav, ftab_chars, r, &mut leaves, &mut buf)?; }
+    } else {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results: std::sync::Mutex<(u64, Vec<Vec<(u32, u64, u64)>>)> =
+            std::sync::Mutex::new((0, Vec::new()));
+        let (next, results, roots_ref) = (&next, &results, &roots);
+        let mut failed: std::sync::Mutex<Option<std::io::Error>> = std::sync::Mutex::new(None);
+        {
+            let failed = &failed;
+            std::thread::scope(|scope| {
+                for _ in 0..threads {
+                    scope.spawn(move || {
+                        let mut buf = vec![0u8; nav.g.side_sz];
+                        let mut mine: Vec<(u32, u64, u64)> = Vec::new();
+                        let mut n = 0u64;
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if i >= roots_ref.len() { break; }
+                            match walk(nav, ftab_chars, roots_ref[i], &mut mine, &mut buf) {
+                                Ok(s) => n += s,
+                                Err(e) => { *failed.lock().unwrap() = Some(e); break; }
+                            }
+                        }
+                        let mut g = results.lock().unwrap();
+                        g.0 += n;
+                        g.1.push(mine);
+                    });
+                }
+            });
+        }
+        if let Some(e) = failed.get_mut().unwrap().take() { return Err(e); }
+        let (n, parts) = std::mem::replace(&mut *results.lock().unwrap(), (0, Vec::new()));
+        steps += n;
+        for part in parts { leaves.extend_from_slice(&part); }
+    }
+    for (i, t, b) in leaves { tftab[i as usize] = (t, b); }
+    if verbose { println!("  ftab: {steps} LF steps over the trie on {threads} thread(s) \
+                           (flat walk would be {})",
                           (ftab_len - 1) as u64 * ftab_chars as u64); }
 
     // A prefix whose walk broke takes the previous entry's upper bound, so the
