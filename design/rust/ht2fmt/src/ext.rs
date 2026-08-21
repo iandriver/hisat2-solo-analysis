@@ -367,7 +367,7 @@ pub enum By {
     Rank,
 }
 
-fn keyof(r: &Rec, by: By) -> (u64, u64, u32) {
+pub fn keyof(r: &Rec, by: By) -> (u64, u64, u32) {
     match by {
         By::To   => (r.to as u64, 0, 0),
         By::From => (r.from as u64, 0, 0),
@@ -541,10 +541,10 @@ fn merge_runs_seg(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::i
 /// Record `i` of a segmented run, for the binary searches the parallel merge
 /// needs. `starts` is the running record count at each segment boundary, built
 /// once per run so a lookup is a binary search plus one `pread`.
-struct SegIndex { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pub len: u64 }
+pub struct SegIndex { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pub len: u64 }
 
 impl SegIndex {
-    fn open(base: &Path) -> std::io::Result<SegIndex> {
+    pub fn open(base: &Path) -> std::io::Result<SegIndex> {
         // Empty segments are dropped, not indexed. They make `starts` repeat a
         // value, and then a binary search for that record can land on the empty
         // one and read nothing -- which is how a partitioned merge silently
@@ -562,7 +562,7 @@ impl SegIndex {
         starts.push(acc);
         Ok(SegIndex { base: base.to_path_buf(), segs, starts, len: acc })
     }
-    fn at(&self, i: u64) -> std::io::Result<Rec> {
+    pub fn at(&self, i: u64) -> std::io::Result<Rec> {
         use std::os::unix::fs::FileExt;
         let k = match self.starts.binary_search(&i) {
             Ok(k) => k.min(self.segs.len() - 1),
@@ -574,7 +574,7 @@ impl SegIndex {
         Ok(Rec::read(&b))
     }
     /// First record index whose key is >= `key`.
-    fn lower_bound(&self, key: (u64, u64, u32), by: By) -> std::io::Result<u64> {
+    pub fn lower_bound(&self, key: (u64, u64, u32), by: By) -> std::io::Result<u64> {
         let (mut lo, mut hi) = (0u64, self.len);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
@@ -596,11 +596,11 @@ impl SegIndex {
 /// chasing it and are fixed above (`seg_remove` scanning rather than walking,
 /// and empty partitions never being spliced in), but neither was the whole of
 /// it, and a merge that loses records is not worth a quarter of the disk.
-struct SegSlice { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pos: u64, end: u64,
+pub struct SegSlice { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pos: u64, end: u64,
                   cur: Option<RecReader>, seg: usize, consume: bool }
 
 impl SegSlice {
-    fn new(ix: &SegIndex, from: u64, to: u64, cap: usize, consume: bool)
+    pub fn new(ix: &SegIndex, from: u64, to: u64, cap: usize, consume: bool)
         -> std::io::Result<SegSlice>
     {
         let mut s = SegSlice { base: ix.base.clone(), segs: ix.segs.clone(),
@@ -621,7 +621,7 @@ impl SegSlice {
         self.cur = Some(r);
         Ok(())
     }
-    fn next(&mut self, cap: usize) -> std::io::Result<Option<Rec>> {
+    pub fn next(&mut self, cap: usize) -> std::io::Result<Option<Rec>> {
         if self.pos >= self.end { return Ok(None); }
         loop {
             match self.cur.as_mut() {

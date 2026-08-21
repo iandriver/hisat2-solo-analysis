@@ -71,6 +71,115 @@ fn join(a_by_to: &Path, b_by_from: &Path, out: &Path, gen: u32) -> std::io::Resu
 /// sharing a single `from` is one path node seen several ways and collapses to
 /// its first member; a run spanning several `from` values is genuinely several
 /// nodes at the same rank and all of them survive.
+/// The join, split by the value it joins on.
+///
+/// `a` is ordered by `to` and `b` by `from`, and a record's group is every `b`
+/// with `b.from == a.to` -- so a range of that one value cuts both sides at once
+/// and no group is ever split. The output is in `a` order, which is `to` order,
+/// so concatenating the partitions in cut order is exactly what the serial join
+/// would have written.
+///
+/// Sorted nodes carry `to == SORTED == u32::MAX` and so all land in the last
+/// partition, where the passthrough runs as before.
+fn join_par(a_by_to: &Path, b_by_from: &Path, out: &Path, gen: u32, budget: usize,
+            nthreads: usize) -> std::io::Result<u64>
+{
+    let ai = ext::SegIndex::open(a_by_to)?;
+    let bi = ext::SegIndex::open(b_by_from)?;
+    if ai.len == 0 { ext::SegWriter::create(out)?.finish()?; return Ok(0); }
+
+    // cuts taken from `a`, evenly by record position -- the join is linear in
+    // `a`, so equal shares of `a` are equal shares of the work
+    let want = nthreads.min(ai.len as usize);
+    let mut cuts: Vec<u32> = Vec::new();
+    for p in 1..want {
+        let i = (p as u64 * ai.len) / want as u64;
+        cuts.push(ai.at(i)?.to);
+    }
+    cuts.dedup();
+
+    let nparts = cuts.len() + 1;
+    let mut abnd = vec![0u64; nparts + 1];
+    let mut bbnd = vec![0u64; nparts + 1];
+    abnd[nparts] = ai.len; bbnd[nparts] = bi.len;
+    for (ci, &c) in cuts.iter().enumerate() {
+        abnd[ci + 1] = ai.lower_bound((c as u64, 0, 0), By::To)?;
+        bbnd[ci + 1] = bi.lower_bound((c as u64, 0, 0), By::From)?;
+    }
+
+    let cap = ((budget * ext::REC) / (2 * nthreads)).clamp(8 * 1024, 1 << 20);
+    let parts: Vec<PathBuf> = (0..nparts).map(|p| {
+        let mut q = out.as_os_str().to_owned(); q.push(format!(".j{p}")); PathBuf::from(q)
+    }).collect();
+    let counts: Vec<std::sync::atomic::AtomicU64> =
+        (0..nparts).map(|_| std::sync::atomic::AtomicU64::new(0)).collect();
+    let err: std::sync::Mutex<Option<std::io::Error>> = std::sync::Mutex::new(None);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    {
+        let (ai, bi, abnd, bbnd, parts, counts, err, next) =
+            (&ai, &bi, &abnd, &bbnd, &parts, &counts, &err, &next);
+        std::thread::scope(|scope| {
+            for _ in 0..nthreads.min(nparts) {
+                scope.spawn(move || loop {
+                    let p = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if p >= nparts { break; }
+                    let r = (|| -> std::io::Result<u64> {
+                        let mut a = ext::SegSlice::new(ai, abnd[p], abnd[p + 1], cap, false)?;
+                        let mut b = ext::SegSlice::new(bi, bbnd[p], bbnd[p + 1], cap, false)?;
+                        let mut w = ext::SegWriter::create(&parts[p])?;
+                        let mut bcur = b.next(cap)?;
+                        let mut group: Vec<Rec> = Vec::new();
+                        let mut group_key: u32 = u32::MAX;
+                        let mut acur = a.next(cap)?;
+                        let mut first = true;
+                        while let Some(an) = acur {
+                            if gen > 4 && an.is_sorted() { w.push(an)?; acur = a.next(cap)?; continue; }
+                            if an.to != group_key || first {
+                                while let Some(bn) = bcur {
+                                    if bn.from < an.to { bcur = b.next(cap)?; } else { break; }
+                                }
+                                group.clear();
+                                while let Some(bn) = bcur {
+                                    if bn.from == an.to { group.push(bn); bcur = b.next(cap)?; } else { break; }
+                                }
+                                group_key = an.to;
+                                first = false;
+                            }
+                            for bn in &group {
+                                let (k0, k1) = if gen <= 3 {
+                                    let shift = 3u32 * (1u32 << (gen - 1));
+                                    ((an.k0 << shift) + bn.k0, 0)
+                                } else {
+                                    (an.k0, bn.k0)
+                                };
+                                w.push(Rec { from: an.from, to: bn.to, k0, k1 })?;
+                            }
+                            acur = a.next(cap)?;
+                        }
+                        w.finish()
+                    })();
+                    match r {
+                        Ok(n) => { counts[p].store(n, std::sync::atomic::Ordering::Relaxed); }
+                        Err(e) => { *err.lock().unwrap() = Some(e); }
+                    }
+                });
+            }
+        });
+    }
+    if let Some(e) = err.into_inner().unwrap() { return Err(e); }
+    ext::seg_remove(out);
+    let mut n = 0u64;
+    for p in 0..nparts {
+        let c = counts[p].load(std::sync::atomic::Ordering::Relaxed);
+        if c == 0 { ext::seg_remove(&parts[p]); continue; }
+        ext::seg_append(out, &parts[p])?;
+        n += c;
+    }
+    ext::seg_remove(a_by_to);
+    ext::seg_remove(b_by_from);
+    Ok(n)
+}
+
 /// A reader with two records of lookahead, which `mergeUpdateRank` needs.
 struct Peek { r: SegReader, buf: Vec<Rec> }
 
@@ -437,9 +546,15 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
             ext::sort_external(&cur, &by_to, By::To, budget, wd, false)?;
             ext::sort_external(&cur, &by_from, By::From, budget, wd, true)?;
             t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-            let n = join(&by_to, &by_from, &joined, gen)?;
-            ext::seg_remove(&by_to);
-            ext::seg_remove(&by_from);
+            let nt = ext::threads();
+            let n = if nt > 1 {
+                join_par(&by_to, &by_from, &joined, gen, budget, nt)?
+            } else {
+                let n = join(&by_to, &by_from, &joined, gen)?;
+                ext::seg_remove(&by_to);
+                ext::seg_remove(&by_from);
+                n
+            };
             t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
             n
         };
