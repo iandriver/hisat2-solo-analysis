@@ -405,8 +405,14 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path,
     // The run phase reads `src` exactly once, so a consuming read hands each
     // segment back as its records land in a run -- the source shrinks at the
     // same rate the runs grow instead of both being resident.
+    // Runs are segmented as well. Freeing a run only when it is fully exhausted
+    // does not help when a merge drains every run in step: eleven half-empty
+    // runs still occupy their full size on disk, which is why `runs + dst`
+    // measured 1.9 copies rather than one.
+    let nthreads = threads();
+    let seg_cap = (budget / 8).max(1);
     let mut runs: Vec<PathBuf> = Vec::new();
-    {
+    if nthreads <= 1 {
         let mut rd = SegReader::open(src, consume)?;
         let mut buf: Vec<Rec> = Vec::with_capacity(budget);
         loop {
@@ -416,16 +422,68 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path,
             }
             if buf.is_empty() { break; }
             buf.sort_by_key(|r| keyof(r, by));
-            // Runs are segmented as well. Freeing a run only when it is fully
-            // exhausted does not help when a merge drains every run in step:
-            // eleven half-empty runs still occupy their full size on disk, which
-            // is why `runs + dst` measured 1.9 copies rather than one.
             let p = tmp.join(format!("run{}.bin", runs.len()));
-            let mut w = SegWriter::create_cap(&p, (budget / 8).max(1))?;
+            let mut w = SegWriter::create_cap(&p, seg_cap)?;
             for r in &buf { w.push(*r)?; }
             w.finish()?;
             runs.push(p);
         }
+    } else {
+        // Reading is sequential and stays on this thread; the sort and the write
+        // are what cost, and each chunk is independent of every other. Runs keep
+        // their input order because the index is assigned at dispatch, which is
+        // what the merge's tie-break relies on.
+        //
+        // `budget` stays the chunk size rather than being divided among the
+        // workers. Dividing it looked like the way to hold the memory ceiling,
+        // but it multiplies the run count -- 18 workers turned 11 runs into 384
+        // -- and the extra merge fan-in costs far more than the parallel sort
+        // saves: 16.8s serial against 24.8s on eighteen threads. So `budget` is
+        // per worker and the ceiling is `threads * budget`; the knob for total
+        // memory is `budget / threads`, chosen by whoever runs it.
+        let chunk = budget;
+        let (tx, rx) = std::sync::mpsc::sync_channel::<(usize, Vec<Rec>)>(2);
+        let rx = std::sync::Mutex::new(rx);
+        let err: std::sync::Mutex<Option<std::io::Error>> = std::sync::Mutex::new(None);
+        let mut n_runs = 0usize;
+        {
+            let (rx, err) = (&rx, &err);
+            std::thread::scope(|scope| -> std::io::Result<()> {
+                for _ in 0..nthreads {
+                    scope.spawn(move || loop {
+                        let (i, mut v) = match rx.lock().unwrap().recv() { Ok(x) => x, Err(_) => break };
+                        v.sort_by_key(|r| keyof(r, by));
+                        let p = tmp.join(format!("run{i}.bin"));
+                        let r = (|| -> std::io::Result<()> {
+                            let mut w = SegWriter::create_cap(&p, seg_cap)?;
+                            for r in &v { w.push(*r)?; }
+                            w.finish()?;
+                            Ok(())
+                        })();
+                        // On failure a worker records it and keeps draining
+                        // rather than leaving. A worker that exits early stops
+                        // consuming, and the dispatcher then blocks forever on a
+                        // full channel.
+                        if let Err(e) = r { *err.lock().unwrap() = Some(e); }
+                    });
+                }
+                let mut rd = SegReader::open(src, consume)?;
+                loop {
+                    let mut v: Vec<Rec> = Vec::with_capacity(chunk);
+                    while v.len() < chunk {
+                        match rd.next()? { Some(r) => v.push(r), None => break }
+                    }
+                    if v.is_empty() { break; }
+                    if tx.send((n_runs, v)).is_err() { break; }
+                    n_runs += 1;
+                    if err.lock().unwrap().is_some() { break; }
+                }
+                drop(tx);
+                Ok(())
+            })?;
+        }
+        if let Some(e) = err.into_inner().unwrap() { return Err(e); }
+        for i in 0..n_runs { runs.push(tmp.join(format!("run{i}.bin"))); }
     }
     if consume { seg_remove(src); }
     if runs.is_empty() { SegWriter::create(dst)?.finish()?; return Ok(0); }
@@ -477,6 +535,92 @@ fn merge_runs_seg(runs: &[PathBuf], dst: &Path, by: By, budget: usize) -> std::i
         }
     }
     w.finish()
+}
+
+
+/// Record `i` of a segmented run, for the binary searches the parallel merge
+/// needs. `starts` is the running record count at each segment boundary, built
+/// once per run so a lookup is a binary search plus one `pread`.
+struct SegIndex { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pub len: u64 }
+
+impl SegIndex {
+    fn open(base: &Path) -> std::io::Result<SegIndex> {
+        let segs = seg_indices(base);
+        let mut starts = Vec::with_capacity(segs.len() + 1);
+        let mut acc = 0u64;
+        for &i in &segs {
+            starts.push(acc);
+            acc += std::fs::metadata(seg_path(base, i))?.len() / REC as u64;
+        }
+        starts.push(acc);
+        Ok(SegIndex { base: base.to_path_buf(), segs, starts, len: acc })
+    }
+    fn at(&self, i: u64) -> std::io::Result<Rec> {
+        use std::os::unix::fs::FileExt;
+        let k = match self.starts.binary_search(&i) {
+            Ok(k) => k.min(self.segs.len() - 1),
+            Err(k) => k - 1,
+        };
+        let f = File::open(seg_path(&self.base, self.segs[k]))?;
+        let mut b = [0u8; REC];
+        f.read_exact_at(&mut b, (i - self.starts[k]) * REC as u64)?;
+        Ok(Rec::read(&b))
+    }
+    /// First record index whose key is >= `key`.
+    fn lower_bound(&self, key: (u64, u64, u32), by: By) -> std::io::Result<u64> {
+        let (mut lo, mut hi) = (0u64, self.len);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if keyof(&self.at(mid)?, by) < key { lo = mid + 1; } else { hi = mid; }
+        }
+        Ok(lo)
+    }
+}
+
+/// A slice of a run, read forward.
+struct RunSlice { idx: usize, r: SegSlice }
+
+/// Sequential reader over records `[from, to)` of a segmented run.
+struct SegSlice { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pos: u64, end: u64,
+                  cur: Option<RecReader>, seg: usize }
+
+impl SegSlice {
+    fn new(ix: &SegIndex, from: u64, to: u64, cap: usize) -> std::io::Result<SegSlice> {
+        let mut s = SegSlice { base: ix.base.clone(), segs: ix.segs.clone(),
+                               starts: ix.starts.clone(), pos: from, end: to,
+                               cur: None, seg: usize::MAX };
+        s.seek(cap)?;
+        Ok(s)
+    }
+    fn seek(&mut self, cap: usize) -> std::io::Result<()> {
+        if self.pos >= self.end { self.cur = None; return Ok(()); }
+        let k = match self.starts.binary_search(&self.pos) {
+            Ok(k) => k.min(self.segs.len() - 1),
+            Err(k) => k - 1,
+        };
+        self.seg = k;
+        let mut r = RecReader::open_buf(&seg_path(&self.base, self.segs[k]), cap)?;
+        for _ in 0..(self.pos - self.starts[k]) { r.next()?; }
+        self.cur = Some(r);
+        Ok(())
+    }
+    fn next(&mut self, cap: usize) -> std::io::Result<Option<Rec>> {
+        if self.pos >= self.end { return Ok(None); }
+        loop {
+            match self.cur.as_mut() {
+                None => return Ok(None),
+                Some(r) => match r.next()? {
+                    Some(x) => { self.pos += 1; return Ok(Some(x)); }
+                    None => {
+                        self.seg += 1;
+                        if self.seg >= self.segs.len() { self.cur = None; return Ok(None); }
+                        self.cur = Some(RecReader::open_buf(
+                            &seg_path(&self.base, self.segs[self.seg]), cap)?);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// One k-way merge over `runs`, stable: ties break by run index, which is input
