@@ -28,7 +28,27 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
+use std::time::Instant;
 use std::{env, process};
+
+/// Per-stage wall time. The whole-genome question is which stage to thread
+/// first, and that is not answerable from the source.
+struct Timer { t0: Instant, last: Instant, marks: Vec<(String, f64)> }
+impl Timer {
+    fn new() -> Timer { let n = Instant::now(); Timer { t0: n, last: n, marks: Vec::new() } }
+    fn mark(&mut self, what: &str) {
+        let now = Instant::now();
+        self.marks.push((what.to_string(), now.duration_since(self.last).as_secs_f64()));
+        self.last = now;
+    }
+    fn report(&self) {
+        let total = self.last.duration_since(self.t0).as_secs_f64();
+        println!("\nstage timing (total {total:.1}s):");
+        for (what, secs) in &self.marks {
+            println!("  {:<22} {:>7.1}s  {:>5.1}%", what, secs, 100.0 * secs / total);
+        }
+    }
+}
 
 const OFF_RATE: u32 = 4;
 const FTAB_CHARS: u32 = 10;
@@ -80,6 +100,7 @@ fn main() -> std::io::Result<()> {
     let verify = a.get(7).cloned();
     let chunk: u32 = env::var("HT2_CHUNK").ok().and_then(|x| x.parse().ok()).unwrap_or(1 << 18);
     fs::create_dir_all(&wd)?;
+    let mut timer = Timer::new();
 
     // ---- the reference front end, .3 and .4 -----------------------------
     // Done first and dropped before the graph stage, so the joined text is not
@@ -101,11 +122,14 @@ fn main() -> std::io::Result<()> {
     };
     println!("reference: {len} joined bp over {} sequence(s), {} fragment(s)",
              names.len(), frags.len());
+    timer.mark("reference, .3/.4");
 
     // ---- the path graph, fragmented and external ------------------------
     let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true)?;
     // generate_edges consumes `cur` -- it reads it once, to sort by `from`
+    timer.mark("graph + doubling");
     let rs = wgemit::generate_edges(&wd, &d.cur, budget, true)?;
+    timer.mark("generateEdges");
     let g = wgemit::geom(rs.gbwt_len, line_rate, w);
 
     // ---- .1.ht2 through the gbwt block, and .2.ht2 ----------------------
@@ -148,6 +172,7 @@ fn main() -> std::io::Result<()> {
         w1.flush()?; w2.flush()?;
         blk
     };
+    timer.mark("gbwt block + .2");
     println!("  gbwt block: {} sides of {} bytes, {} SA samples, zOffs {:?}",
              g.num_sides, g.side_sz, blk.n_sa, blk.z_offs);
     let bad_fchr = (0..4).any(|i| blk.fchr[i + 1] - blk.fchr[i] != rs.bucket[i]);
@@ -161,6 +186,7 @@ fn main() -> std::io::Result<()> {
         wgemit::build_ftab(&nav, FTAB_CHARS, w, true)?
     };
 
+    timer.mark("ftab");
     {
         let mut w1 = OpenOptions::new().append(true).open(&path1)?;
         let mut tail: Vec<u8> = Vec::with_capacity((ftab.len() + eftab.len()) * 4);
@@ -224,9 +250,12 @@ fn main() -> std::io::Result<()> {
         println!("wrote {out}.7.{ext} ({} bytes) and .8.{ext} ({} bytes) -- {} variants, {} haplotypes",
                  o7.len(), o8.len(), p.alts.len(), p.haps.len());
     }
+    timer.mark("local indexes .5/.6");
     println!("wrote {out}.5.{ext} ({} bytes) and .6.{ext} ({} bytes)",
              fs::metadata(format!("{out}.5.{ext}"))?.len(),
              fs::metadata(format!("{out}.6.{ext}"))?.len());
+
+    timer.report();
 
     if env::var("HT2_KEEP").is_err() {
         for f in ["nodes.bin", "edges.bin", "rows.bin", "nodeinfo.bin", "floc.bin"] {

@@ -323,8 +323,13 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         (wd.join("by_to.bin"), wd.join("by_from.bin"), wd.join("joined.bin"), wd.join("sorted.bin"));
     let mut gen = 0u32;
     let mut n_path_nodes = n0;
+    // Where the doubling's time actually goes, per phase, summed over all
+    // generations -- the question of what to thread first is not answerable
+    // from the source.
+    let (mut t_sort, mut t_join, mut t_rank) = (0f64, 0f64, 0f64);
     loop {
         gen += 1;
+        let mut t = std::time::Instant::now();
         // `cur` is dead the moment both orderings of it exist -- the join reads
         // `by_to` and `by_from`, and whichever branch follows rewrites `cur`
         // from scratch. Scratch is the binding resource here, so every file gets
@@ -332,20 +337,24 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         // the generation.
         ext::sort_external(&cur, &by_to, By::To, budget, wd, false)?;
         ext::sort_external(&cur, &by_from, By::From, budget, wd, true)?;
+        t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
         let temp = join(&by_to, &by_from, &joined, gen)?;
         ext::seg_remove(&by_to);
         ext::seg_remove(&by_from);
+        t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
 
         let (nodes, ranks) = if gen <= 3 {
             ext::seg_rename(&joined, &cur)?;
             (temp, 0u64)
         } else {
             ext::sort_external(&joined, &sorted_k, By::Key, budget, wd, true)?;
+            t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
             let (n, rk) = if gen == 4 { merge_update_rank_gen4(&sorted_k, &cur)? }
                           else        { merge_update_rank(&sorted_k, &cur)? };
             ext::seg_remove(&sorted_k);
             (n, rk)
         };
+        t_rank += t.elapsed().as_secs_f64();
         if verbose { println!("Generation {gen} ({temp} -> {nodes} nodes, {ranks} ranks)"); }
         curve.push((gen, temp, nodes, ranks));
         n_path_nodes = nodes;
@@ -353,6 +362,12 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         if gen > 64 { panic!("doubling did not converge"); }
     }
     for p in [&by_to, &by_from, &joined, &sorted_k] { ext::seg_remove(p); }
+    if verbose {
+        let tot = t_sort + t_join + t_rank;
+        println!("  doubling phases: sort {:.1}s ({:.0}%), join {:.1}s ({:.0}%), mergeUpdateRank {:.1}s ({:.0}%)",
+                 t_sort, 100.0 * t_sort / tot, t_join, 100.0 * t_join / tot,
+                 t_rank, 100.0 * t_rank / tot);
+    }
     Ok(Doubled { cur, n_path_nodes, curve, graph: g })
 }
 
