@@ -81,6 +81,9 @@ impl RecWriter {
     pub fn create(p: &Path) -> std::io::Result<RecWriter> {
         Ok(RecWriter { f: File::create(p)?, buf: Vec::with_capacity(BLOCK), n: 0 })
     }
+    pub fn from_file(f: File) -> RecWriter {
+        RecWriter { f, buf: Vec::with_capacity(BLOCK), n: 0 }
+    }
     #[inline]
     pub fn push(&mut self, r: Rec) -> std::io::Result<()> {
         if self.buf.len() + REC > BLOCK { self.spill()?; }
@@ -236,6 +239,18 @@ pub fn seg_len(base: &Path) -> u64 {
         .sum()
 }
 
+/// Append every segment of `src` after the segments already in `dst`.
+/// Metadata only -- no data is copied, and a short segment in the middle is
+/// harmless because a reader only cares about the order.
+pub fn seg_append(dst: &Path, src: &Path) -> std::io::Result<()> {
+    let mut next = seg_indices(dst).last().map(|&i| i + 1).unwrap_or(0);
+    for i in seg_indices(src) {
+        std::fs::rename(seg_path(src, i), seg_path(dst, next))?;
+        next += 1;
+    }
+    Ok(())
+}
+
 /// Move every segment of `from` onto `to`. Metadata only -- no data is copied.
 pub fn seg_rename(from: &Path, to: &Path) -> std::io::Result<()> {
     seg_remove(to);
@@ -257,6 +272,21 @@ impl SegWriter {
         seg_truncate(base);
         Ok(SegWriter { base: base.to_path_buf(), seg: 0, in_seg: 0, cap: cap.max(1),
                        w: Some(RecWriter::create(&seg_path(base, 0))?), n: 0 })
+    }
+    /// Continue an existing base, so a second pass can append to what a first
+    /// one wrote without copying it.
+    pub fn append(base: &Path) -> std::io::Result<SegWriter> {
+        let idx = seg_indices(base);
+        match idx.last() {
+            None => SegWriter::create(base),
+            Some(&last) => {
+                let p = seg_path(base, last);
+                let in_seg = std::fs::metadata(&p)?.len() as usize / REC;
+                let f = std::fs::OpenOptions::new().append(true).open(&p)?;
+                Ok(SegWriter { base: base.to_path_buf(), seg: last, in_seg,
+                               cap: seg_records(), w: Some(RecWriter::from_file(f)), n: 0 })
+            }
+        }
     }
     pub fn push(&mut self, r: Rec) -> std::io::Result<()> {
         if self.in_seg == self.cap {
@@ -543,4 +573,15 @@ pub fn sort_pairs_external(src: &Path, dst: &Path, budget: usize, tmp: &Path)
     w.flush()?;
     for p in runs { let _ = std::fs::remove_file(p); }
     Ok(n)
+}
+
+/// Worker count: `HT2_THREADS`, else what the machine reports.
+pub fn threads() -> usize {
+    use std::sync::OnceLock;
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::env::var("HT2_THREADS").ok()
+                        .and_then(|x| x.parse::<usize>().ok())
+                        .filter(|&x| x > 0)
+                        .unwrap_or_else(|| std::thread::available_parallelism()
+                                            .map(|n| n.get()).unwrap_or(1)))
 }

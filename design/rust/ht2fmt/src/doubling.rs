@@ -105,11 +105,15 @@ impl Peek {
 /// following can be DISCARDED outright when it is a block of one, the previous
 /// written node is already sorted, and the two share a `from`. Without it the
 /// node counts drift the moment pruning starts.
-fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
+fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64, u64)> {
     let mut p = Peek::new(src)?;
     let mut w = SegWriter::create(dst)?;
     let mut ranks: u64 = 0;
     let mut out_n: u64 = 0;
+    // How many nodes come out already sorted. The next generation needs it to
+    // know whether the shortcut in `join_late` is worth taking, and counting
+    // here costs nothing.
+    let mut n_sorted: u64 = 0;
     let mut block: Vec<Rec> = Vec::new();
     let mut prev_written: Option<Rec> = None;
 
@@ -126,6 +130,7 @@ fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
         if block.len() == 1 {
             let mut n = block[0];
             n.k0 = ranks; ranks += 1;
+            if n.is_sorted() { n_sorted += 1; }
             w.push(n)?; out_n += 1;
             prev_written = Some(n);
             continue;
@@ -140,6 +145,7 @@ fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
             if !merge {
                 for j in i..i + shift {
                     let mut n = block[j]; n.k0 = ranks;
+                    if n.is_sorted() { n_sorted += 1; }
                     w.push(n)?; out_n += 1;
                     prev_written = Some(n);
                 }
@@ -153,6 +159,7 @@ fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
                     let mut n = block[i];
                     n.to = SORTED;
                     n.k0 = ranks; ranks += 1;
+                    n_sorted += 1;
                     w.push(n)?; out_n += 1;
                     prev_written = Some(n);
                 }
@@ -171,7 +178,7 @@ fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
         }
     }
     w.finish()?;
-    Ok((out_n, ranks))
+    Ok((out_n, ranks, n_sorted))
 }
 
 /// `mergeUpdateRank`'s generation-4 body (`gbwt_graph.h:2160`), streamed.
@@ -185,7 +192,7 @@ fn merge_update_rank(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
 /// `nextMaximalSet` scans forward from the run's head until `from` changes,
 /// remembering the last position at which the key changed, and consumes only up
 /// to that boundary. So the buffer is one run of equal `from`, not the file.
-fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)> {
+fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64, u64)> {
     let collapsed = dst.with_extension("collapse");
     {
         let mut r = SegReader::open(src, true)?;
@@ -229,6 +236,7 @@ fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)>
     let mut group: Vec<Rec> = Vec::new();
     let mut ranks: u64 = 0;
     let mut out_n: u64 = 0;
+    let mut n_sorted: u64 = 0;
     let mut cur = r.next()?;
     while let Some(head) = cur {
         group.clear();
@@ -244,13 +252,89 @@ fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64)>
             let mut n = *g;
             if solo { n.to = SORTED; }
             n.k0 = ranks; n.k1 = 0;
+            if n.is_sorted() { n_sorted += 1; }
             w.push(n)?; out_n += 1;
         }
         ranks += 1;
     }
     w.finish()?;
     ext::seg_remove(&collapsed);
-    Ok((out_n, ranks))
+    Ok((out_n, ranks, n_sorted))
+}
+
+
+/// The join, when almost every node is already sorted.
+///
+/// From generation 5 the unsorted set collapses -- on a 20 Mb reference it goes
+/// 675,653 -> 116,474 -> 28,919 -> 4,631 -> 544 out of 21.1M nodes -- yet the
+/// plain path sorts all 21 million by `to` and again by `from` every generation
+/// to move 99.9% of them through untouched. That is 19.6s of the 31.6s the
+/// doubling spends sorting.
+///
+/// The shortcut is exact, not an approximation, and rests on one fact: a sorted
+/// node carries `to == SORTED == u32::MAX`, the largest `to` there is. A stable
+/// sort by `to` therefore already puts every sorted node at the end, in its
+/// original order, so
+///
+///     by_to  ==  [unsorted, sorted by `to`]  ++  [sorted, in `cur` order]
+///
+/// and `join` walking that emits its computed head followed by the sorted nodes
+/// verbatim. Neither half needs the other to be materialised.
+///
+/// The from-table shrinks the same way. Only nodes some unsorted node actually
+/// looks up can be reached, so one streaming filter against the `to` values
+/// replaces a full sort by `from`.
+///
+/// Three sequential reads of `cur` and one write, against two full external
+/// sorts and a merge.
+fn join_late(cur: &Path, joined: &Path, wd: &Path, gen: u32, budget: usize)
+    -> std::io::Result<u64>
+{
+    let (un, mini) = (wd.join("un.bin"), wd.join("mini.bin"));
+    let (u_by_to, m_by_from) = (wd.join("ubt.bin"), wd.join("mbf.bin"));
+
+    // pass 1 -- the unsorted nodes, and every `to` they will look up
+    let mut tos: Vec<u32> = Vec::new();
+    {
+        let mut r = SegReader::open(cur, false)?;
+        let mut w = SegWriter::create(&un)?;
+        while let Some(n) = r.next()? {
+            if !n.is_sorted() { w.push(n)?; tos.push(n.to); }
+        }
+        w.finish()?;
+    }
+    tos.sort_unstable();
+    tos.dedup();
+
+    // pass 2 -- the only nodes the join can reach, and the sorted tail, in one
+    // read. The tail is written straight out in `cur` order, which is exactly
+    // where a stable sort by `to` would have left it.
+    let tail = wd.join("tail.bin");
+    let mut n_tail = 0u64;
+    {
+        let mut r = SegReader::open(cur, true)?;
+        let mut w = SegWriter::create(&mini)?;
+        let mut t = SegWriter::create(&tail)?;
+        while let Some(n) = r.next()? {
+            // BOTH, not either: a sorted node still sits in the from-table, so
+            // it can be somebody's lookup target as well as part of the tail
+            if tos.binary_search(&n.from).is_ok() { w.push(n)?; }
+            if n.is_sorted() { t.push(n)?; n_tail += 1; }
+        }
+        w.finish()?; t.finish()?;
+    }
+    drop(tos);
+
+    ext::sort_external(&un, &u_by_to, By::To, budget, wd, true)?;
+    ext::sort_external(&mini, &m_by_from, By::From, budget, wd, true)?;
+    let n = join(&u_by_to, &m_by_from, joined, gen)?;
+    ext::seg_remove(&u_by_to);
+    ext::seg_remove(&m_by_from);
+
+    // and the tail goes on the end, by renaming its segments -- no third pass
+    // and no copy
+    ext::seg_append(joined, &tail)?;
+    Ok(n + n_tail)
 }
 
 /// The reference graph, on disk, plus the converged path-node file.
@@ -327,6 +411,9 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
     // generations -- the question of what to thread first is not answerable
     // from the source.
     let (mut t_sort, mut t_join, mut t_rank) = (0f64, 0f64, 0f64);
+    let (mut p_sort, mut p_join, mut p_rank) = (0f64, 0f64, 0f64);
+    // nodes already marked sorted coming into the next generation
+    let mut n_sorted: u64 = 0;
     loop {
         gen += 1;
         let mut t = std::time::Instant::now();
@@ -335,13 +422,27 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         // from scratch. Scratch is the binding resource here, so every file gets
         // deleted at the point it stops being readable rather than at the end of
         // the generation.
-        ext::sort_external(&cur, &by_to, By::To, budget, wd, false)?;
-        ext::sort_external(&cur, &by_from, By::From, budget, wd, true)?;
-        t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-        let temp = join(&by_to, &by_from, &joined, gen)?;
-        ext::seg_remove(&by_to);
-        ext::seg_remove(&by_from);
-        t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
+        // `join` honours the sorted passthrough only past generation 4, and the
+        // shortcut only pays while the unsorted set is small enough that its
+        // `to` values fit in the sort budget's worth of memory.
+        let unsorted = n_path_nodes.saturating_sub(n_sorted);
+        let late = gen > 4 && n_sorted > 0
+                   && unsorted * 4 < n_path_nodes
+                   && unsorted <= budget as u64;
+        let temp = if late {
+            let n = join_late(&cur, &joined, wd, gen, budget)?;
+            t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
+            n
+        } else {
+            ext::sort_external(&cur, &by_to, By::To, budget, wd, false)?;
+            ext::sort_external(&cur, &by_from, By::From, budget, wd, true)?;
+            t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
+            let n = join(&by_to, &by_from, &joined, gen)?;
+            ext::seg_remove(&by_to);
+            ext::seg_remove(&by_from);
+            t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
+            n
+        };
 
         let (nodes, ranks) = if gen <= 3 {
             ext::seg_rename(&joined, &cur)?;
@@ -349,13 +450,21 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         } else {
             ext::sort_external(&joined, &sorted_k, By::Key, budget, wd, true)?;
             t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-            let (n, rk) = if gen == 4 { merge_update_rank_gen4(&sorted_k, &cur)? }
-                          else        { merge_update_rank(&sorted_k, &cur)? };
+            let (n, rk, ns) = if gen == 4 { merge_update_rank_gen4(&sorted_k, &cur)? }
+                              else        { merge_update_rank(&sorted_k, &cur)? };
             ext::seg_remove(&sorted_k);
+            n_sorted = ns;
             (n, rk)
         };
         t_rank += t.elapsed().as_secs_f64();
-        if verbose { println!("Generation {gen} ({temp} -> {nodes} nodes, {ranks} ranks)"); }
+        if verbose {
+            let unsorted = nodes.saturating_sub(ranks);
+            println!("Generation {gen} ({temp} -> {nodes} nodes, {ranks} ranks)   \
+                      [{:.1}s sort, {:.1}s join, {:.1}s rank; {unsorted} unsorted{}]",
+                     t_sort - p_sort, t_join - p_join, t_rank - p_rank,
+                     if late { ", late" } else { "" });
+            p_sort = t_sort; p_join = t_join; p_rank = t_rank;
+        }
         curve.push((gen, temp, nodes, ranks));
         n_path_nodes = nodes;
         if gen > 3 && ranks == nodes { break; }
