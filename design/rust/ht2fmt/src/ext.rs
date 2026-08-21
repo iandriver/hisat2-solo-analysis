@@ -506,10 +506,17 @@ pub fn sort_external(src: &Path, dst: &Path, by: By, budget: usize, tmp: &Path,
         runs = next;
         pass += 1;
     }
-    // The last pass writes the sorted output in segments, and frees each run as
-    // it empties, so `runs + dst` stays at about one copy of the data.
-    let n = merge_runs_seg(&runs, dst, by, budget)?;
-    for p in runs { seg_truncate(&p); }
+    // The last pass writes the sorted output in segments. Serially it frees each
+    // run as it empties, so `runs + dst` stays at about one copy of the data;
+    // the parallel one cannot do that (every worker reads every run) and pays a
+    // second copy for the duration of the merge.
+    let n = if nthreads > 1 && runs.len() > 1 {
+        merge_runs_seg_par(&runs, dst, by, budget, nthreads)?
+    } else {
+        let n = merge_runs_seg(&runs, dst, by, budget)?;
+        for p in &runs { seg_truncate(p); }
+        n
+    };
     Ok(n)
 }
 
@@ -577,9 +584,6 @@ impl SegIndex {
     }
 }
 
-/// A slice of a run, read forward.
-struct RunSlice { idx: usize, r: SegSlice }
-
 /// Sequential reader over records `[from, to)` of a segmented run.
 struct SegSlice { base: PathBuf, segs: Vec<usize>, starts: Vec<u64>, pos: u64, end: u64,
                   cur: Option<RecReader>, seg: usize }
@@ -621,6 +625,110 @@ impl SegSlice {
             }
         }
     }
+}
+
+
+/// The final merge, split across workers by KEY RANGE.
+///
+/// The run phase parallelises trivially but the merge did not, and once the
+/// sorting was spread over cores the merge was 74% of what a sort cost. It is
+/// splittable all the same: pick `p-1` splitter keys, binary-search every run
+/// for where each splitter falls, and each worker merges its own key range out
+/// of every run. Concatenating the outputs in splitter order is the full sorted
+/// order, and because segments are just numbered files the concatenation is a
+/// rename rather than a copy.
+///
+/// Stability survives it. Within a range the merge breaks ties by run index
+/// exactly as the serial one does, and every record sharing a key lands in one
+/// range, because the range bounds are `lower_bound` of the same key.
+fn merge_runs_seg_par(runs: &[PathBuf], dst: &Path, by: By, budget: usize, nthreads: usize)
+    -> std::io::Result<u64>
+{
+    let ix: Vec<SegIndex> = runs.iter().map(|p| SegIndex::open(p)).collect::<Result<_,_>>()?;
+    let total: u64 = ix.iter().map(|x| x.len).sum();
+    if total == 0 { SegWriter::create(dst)?.finish()?; return Ok(0); }
+
+    // splitters, from a spread of samples across every run
+    let want = (nthreads * 32).max(nthreads);
+    let mut samples: Vec<(u64, u64, u32)> = Vec::new();
+    for x in &ix {
+        if x.len == 0 { continue; }
+        let k = ((x.len * want as u64) / total).max(1);
+        for j in 0..k {
+            let i = (j * x.len) / k;
+            samples.push(keyof(&x.at(i)?, by));
+        }
+    }
+    samples.sort_unstable();
+    let mut cuts: Vec<(u64, u64, u32)> = Vec::new();
+    for p in 1..nthreads {
+        let i = (p * samples.len()) / nthreads;
+        if i < samples.len() { cuts.push(samples[i]); }
+    }
+    cuts.dedup();
+
+    // where each cut falls in each run
+    let nparts = cuts.len() + 1;
+    let mut bounds: Vec<Vec<u64>> = vec![vec![0u64; ix.len()]; nparts + 1];
+    for r in 0..ix.len() { bounds[nparts][r] = ix[r].len; }
+    for (ci, c) in cuts.iter().enumerate() {
+        for r in 0..ix.len() { bounds[ci + 1][r] = ix[r].lower_bound(*c, by)?; }
+    }
+
+    let cap = ((budget * REC) / (ix.len() * nthreads).max(1)).clamp(8 * 1024, 1 << 20);
+    let parts: Vec<PathBuf> = (0..nparts).map(|p| {
+        let mut q = dst.as_os_str().to_owned(); q.push(format!(".p{p}")); PathBuf::from(q)
+    }).collect();
+    let counts: Vec<std::sync::atomic::AtomicU64> =
+        (0..nparts).map(|_| std::sync::atomic::AtomicU64::new(0)).collect();
+    let err: std::sync::Mutex<Option<std::io::Error>> = std::sync::Mutex::new(None);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    {
+        let (ix, bounds, parts, counts, err, next) =
+            (&ix, &bounds, &parts, &counts, &err, &next);
+        std::thread::scope(|scope| {
+            for _ in 0..nthreads.min(nparts) {
+                scope.spawn(move || loop {
+                    let p = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if p >= nparts { break; }
+                    let r = (|| -> std::io::Result<u64> {
+                        let mut rds: Vec<Option<SegSlice>> = Vec::with_capacity(ix.len());
+                        for r in 0..ix.len() {
+                            rds.push(Some(SegSlice::new(&ix[r], bounds[p][r], bounds[p + 1][r], cap)?));
+                        }
+                        let mut heap: BinaryHeap<HeapItem> = BinaryHeap::new();
+                        for i in 0..rds.len() {
+                            if let Some(x) = rds[i].as_mut().unwrap().next(cap)? {
+                                heap.push(HeapItem { key: keyof(&x, by), idx: i, rec: x });
+                            }
+                        }
+                        let mut w = SegWriter::create(&parts[p])?;
+                        while let Some(it) = heap.pop() {
+                            w.push(it.rec)?;
+                            if let Some(x) = rds[it.idx].as_mut().unwrap().next(cap)? {
+                                heap.push(HeapItem { key: keyof(&x, by), idx: it.idx, rec: x });
+                            }
+                        }
+                        w.finish()
+                    })();
+                    match r {
+                        Ok(n) => { counts[p].store(n, std::sync::atomic::Ordering::Relaxed); }
+                        Err(e) => { *err.lock().unwrap() = Some(e); }
+                    }
+                });
+            }
+        });
+    }
+    if let Some(e) = err.into_inner().unwrap() { return Err(e); }
+
+    seg_remove(dst);
+    let mut n = 0u64;
+    for p in 0..nparts {
+        seg_append(dst, &parts[p])?;
+        n += counts[p].load(std::sync::atomic::Ordering::Relaxed);
+    }
+    for p in runs { seg_truncate(p); }
+    Ok(n)
 }
 
 /// One k-way merge over `runs`, stable: ties break by run index, which is input
