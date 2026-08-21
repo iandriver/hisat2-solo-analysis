@@ -143,9 +143,10 @@ for byte against `hisat2-build`:
 | reference | path nodes | C++ wall / RSS | Rust wall / RSS / scratch |
 |---|---|---|---|
 | 200 bp - 900 kb (8 fixtures) | 241 - 1.0M | — | 32-82 MB |
-| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / **3,277 MB** | 59 s / **182 MB** / 1.03 GB |
+| 20 Mb, 77,843 variants | 21,171,995 | 14.9 s / **3,277 MB** | **18.7 s** / 928 MB / 1.20 GB (8 threads) |
+| " | " | " | 35.9 s / **177 MB** / 1.03 GB (1 thread) |
 
-4.0x the wall, **18x less memory**, single-threaded against a build that had
+Now **1.3x the wall on eight threads** and 3.6x less memory, or 2.4x the wall at **18x less memory** on one, single-threaded against a build that had
 96 vCPU available. Peak RSS is not a function of the path-node count at all: it
 is `graph::parse`'s joined text plus one F-bit rank per side.
 
@@ -172,7 +173,7 @@ for what came out. Extrapolating to the 5,917,131,871 path nodes E3 measured:
 |---|---|
 | scratch disk | **~255 GB** — 215 GB of node file, 40 GB of reference graph |
 | peak RSS | ~3.5-4.5 GB, nearly all of it the joined text |
-| wall | 6-10 h single-threaded, from ~20 TB of sequential I/O at 1-2 GB/s |
+| wall | 3-6 h on eight threads, and I/O-bound rather than CPU-bound past that |
 | output | 11 GB |
 
 Two copies is the floor for this structure rather than a number still worth

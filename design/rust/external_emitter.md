@@ -142,6 +142,43 @@ What is left is the floor for this structure: the join needs the nodes ordered b
 `to` and by `from` at the same time, and both are full copies. 36 bytes per path
 node, two copies of an 18-byte node, plus the reference graph on disk.
 
+## Threading, and what it was worth
+
+Timing the stages first turned out to matter more than the threading did. The
+profile said 50% of the build was external sorts inside the doubling and 4% was
+`mergeUpdateRank` -- but the generation curve said something louder: unsorted
+nodes collapse after generation 5, so five of eleven generations were sorting 21
+million records to move 99.9% of them unchanged. Not sorting them is worth more
+than sorting them on more cores.
+
+| | 20 Mb build | what it was |
+|---|---|---|
+| start | 62.7s | |
+| skip the pass-through nodes | ~51s | no threads involved |
+| one local index per core | ~50s | 7.5s -> 1.2s on that stage |
+| ftab: a side cache, one thread | ~47s | threading it made it *slower* |
+| sort runs on every core | ~36s | keep the chunk size, not the total |
+| merge split by key range | ~19s | the big one |
+| join split by its join value | **18.7s** | modest; `join_late` is untouched |
+
+**3.35x, and two of the six steps were not threading at all.** Peak RSS is now
+177 MB on one thread and ~930 MB on eight, because `budget` is the chunk size
+per worker; whoever runs it divides. Peak scratch went 1.03 -> 1.20 GB, which is
+the partitioned merge's second copy of the runs.
+
+Three findings worth more than the speedup:
+
+- **The ftab got slower with threads** -- 2.9s on one against 4.3s on eighteen.
+  Six `pread` calls per step on one file, 8.3M of them, and at this scale the
+  block is page-cached so the syscall contention is all there is. Caching four
+  sides per worker removed most of the calls and the stage went 4.9s -> 2.9s
+  without any concurrency at all.
+- **Dividing the memory budget among workers made the sort slower at every
+  thread count.** Smaller chunks mean more runs, and the merge fan-in that buys
+  costs more than the parallel sort saves.
+- **`mergeUpdateRank` stays serial**, as it is in `gbwt_graph.h`, and is now 20%
+  of the doubling. It is the one stage with a genuine prefix dependency.
+
 ## Measured
 
 All eight files, both widths, byte-identical against `hisat2-build` on every
