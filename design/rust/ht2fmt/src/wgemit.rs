@@ -500,14 +500,41 @@ pub struct Nav {
     f_rank_save: Vec<u64>,
 }
 
+/// A few decoded sides, kept per worker.
+///
+/// One `step` touches six side positions -- `occ` for top and bot, `rank_M` for
+/// each of the two LF results, `select_F` for each of the two nodes -- and the
+/// pairs usually land in the same side, because the range being walked is
+/// narrow. Reading each one straight from the file made the ftab 8.3M `pread`
+/// calls, which is why threading it made it SLOWER: eighteen workers hammering
+/// one descriptor. Caching four sides removes most of the calls before any of
+/// them has to be concurrent.
+pub struct Sides { slots: Vec<(usize, Vec<u8>)>, filled: Vec<bool>, next: usize }
+
+impl Sides {
+    pub fn new(side_sz: usize) -> Sides {
+        Sides { slots: (0..4).map(|_| (0usize, vec![0u8; side_sz])).collect(),
+                filled: vec![false; 4], next: 0 }
+    }
+}
+
 impl Nav {
     pub fn new(f: File, off: u64, g: Geom, gbwt_len: u64, fchr: [u64; 5],
                zset: Vec<u64>, f_rank_save: Vec<u64>) -> Nav {
         Nav { f, off, g, gbwt_len, fchr, zset, f_rank_save }
     }
 
-    fn side(&self, s: usize, buf: &mut [u8]) -> std::io::Result<()> {
-        self.f.read_exact_at(buf, self.off + (s * self.g.side_sz) as u64)
+    /// Slot index of side `s`, reading it in only on a miss.
+    fn side(&self, s: usize, c: &mut Sides) -> std::io::Result<usize> {
+        for i in 0..c.slots.len() {
+            if c.filled[i] && c.slots[i].0 == s { return Ok(i); }
+        }
+        let i = c.next;
+        c.next = (c.next + 1) % c.slots.len();
+        self.f.read_exact_at(&mut c.slots[i].1, self.off + (s * self.g.side_sz) as u64)?;
+        c.slots[i].0 = s;
+        c.filled[i] = true;
+        Ok(i)
     }
     fn tally(buf: &[u8], side_sz: usize, w: usize, k: usize) -> u64 {
         let mut b = [0u8; 8];
@@ -528,10 +555,11 @@ impl Nav {
     /// Number of `c` characters in rows `[0, row)`. The `'Z'` row is stored as
     /// `'A'` but was never counted when the block was written, so it has to be
     /// discounted here too or every LF step after it shifts.
-    pub fn occ(&self, row: u64, c: usize, buf: &mut [u8]) -> std::io::Result<u64> {
+    pub fn occ(&self, row: u64, c: usize, sd: &mut Sides) -> std::io::Result<u64> {
         let s = (row / self.g.rows_per_side as u64) as usize;
         let start = s as u64 * self.g.rows_per_side as u64;
-        self.side(s, buf)?;
+        let i = self.side(s, sd)?;
+        let buf = &sd.slots[i].1;
         let mut n = Self::tally(buf, self.g.side_sz, self.g.w, 2 + c);
         for off in 0..(row - start) as usize {
             if Self::bwt_at(buf, off) as usize == c { n += 1; }
@@ -544,11 +572,12 @@ impl Nav {
 
     /// M bits in rows `[0, x)` — the exclusive prefix sum
     /// `rank_M(initFromRow_bit(x))` computes.
-    pub fn rank_m(&self, x: u64, buf: &mut [u8]) -> std::io::Result<u64> {
+    pub fn rank_m(&self, x: u64, sd: &mut Sides) -> std::io::Result<u64> {
         let x = x.min(self.gbwt_len);
         let s = (x / self.g.rows_per_side as u64) as usize;
         let start = s as u64 * self.g.rows_per_side as u64;
-        self.side(s, buf)?;
+        let i = self.side(s, sd)?;
+        let buf = &sd.slots[i].1;
         let mut n = Self::tally(buf, self.g.side_sz, self.g.w, 1);
         for off in 0..(x - start) as usize {
             n += Self::mbit_at(buf, &self.g, off) as u64;
@@ -557,7 +586,7 @@ impl Nav {
     }
 
     /// Row of the `k`-th F bit, one-based, matching `self_f[k - 1]`.
-    pub fn select_f(&self, k: u64, buf: &mut [u8]) -> std::io::Result<u64> {
+    pub fn select_f(&self, k: u64, sd: &mut Sides) -> std::io::Result<u64> {
         if k == 0 { return Ok(self.gbwt_len); }
         // last side whose start has fewer than k F bits before it
         let mut lo = 0usize;
@@ -567,7 +596,8 @@ impl Nav {
             if self.f_rank_save[mid] < k { lo = mid; } else { hi = mid; }
         }
         if self.f_rank_save[lo] >= k { return Ok(self.gbwt_len); }
-        self.side(lo, buf)?;
+        let i = self.side(lo, sd)?;
+        let buf = &sd.slots[i].1;
         let mut n = self.f_rank_save[lo];
         for off in 0..self.g.rows_per_side {
             if Self::fbit_at(buf, &self.g, off) == 1 {
@@ -585,16 +615,16 @@ impl Nav {
     /// structure — rank over M to find which node the row belongs to, then
     /// select over F to find where that node's incoming edges begin.
     /// `None` means the range went empty, which ends the walk.
-    fn step(&self, top: u64, bot: u64, c: usize, buf: &mut [u8])
+    fn step(&self, top: u64, bot: u64, c: usize, sd: &mut Sides)
         -> std::io::Result<Option<(u64, u64)>>
     {
-        let nt = self.fchr[c] + self.occ(top, c, buf)?;
-        let nb = self.fchr[c] + self.occ(bot, c, buf)?;
+        let nt = self.fchr[c] + self.occ(top, c, sd)?;
+        let nb = self.fchr[c] + self.occ(bot, c, sd)?;
         if nt >= nb { return Ok(None); }
-        let node_top = self.rank_m(nt + 1, buf)? - 1;
-        let node_bot = self.rank_m(nb, buf)?;
-        let t = self.select_f(node_top + 1, buf)?;
-        let b = self.select_f(node_bot + 1, buf)?;
+        let node_top = self.rank_m(nt + 1, sd)? - 1;
+        let node_bot = self.rank_m(nb, sd)?;
+        let t = self.select_f(node_top + 1, sd)?;
+        let b = self.select_f(node_bot + 1, sd)?;
         if t >= b { return Ok(None); }
         Ok(Some((t, b)))
     }
@@ -619,13 +649,13 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
     /// bits match its prefix, and those are STRIDED through `tftab`, not
     /// contiguous, so there is no slice to hand a worker.
     fn walk(nav: &Nav, ftab_chars: u32, root: (u64, u64, u32, usize),
-            out: &mut Vec<(u32, u64, u64)>, buf: &mut [u8]) -> std::io::Result<u64> {
+            out: &mut Vec<(u32, u64, u64)>, sd: &mut Sides) -> std::io::Result<u64> {
         let mut steps = 0u64;
         let mut stack: Vec<(u64, u64, u32, usize)> = vec![root];
         while let Some((top, bot, depth, bits)) = stack.pop() {
             for c in 0..4usize {
                 steps += 1;
-                match nav.step(top, bot, c, buf)? {
+                match nav.step(top, bot, c, sd)? {
                     None => {}                       // whole subtree is degenerate
                     Some((t, b)) => {
                         let nbits = bits | (c << (2 * depth));
@@ -642,7 +672,7 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
     // worker. Every subtree is an independent read-only walk over the block, so
     // this is the one stage where more cores buy queue depth as well as CPU.
     const FANOUT_DEPTH: u32 = 3;
-    let mut buf = vec![0u8; nav.g.side_sz];
+    let mut sd = Sides::new(nav.g.side_sz);
     let mut steps = 0u64;
     let mut roots: Vec<(u64, u64, u32, usize)> = vec![(0, nav.gbwt_len, 0, 0)];
     let mut leaves: Vec<(u32, u64, u64)> = Vec::new();
@@ -651,7 +681,7 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
         for &(top, bot, depth, bits) in &roots {
             for c in 0..4usize {
                 steps += 1;
-                if let Some((t, b)) = nav.step(top, bot, c, &mut buf)? {
+                if let Some((t, b)) = nav.step(top, bot, c, &mut sd)? {
                     let nbits = bits | (c << (2 * depth));
                     if depth + 1 == ftab_chars { leaves.push((nbits as u32, t, b)); }
                     else { next.push((t, b, depth + 1, nbits)); }
@@ -661,9 +691,17 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
         roots = next;
     }
 
-    let threads = crate::ext::threads().min(roots.len().max(1));
+    // Measured, not assumed: on a block that fits in page cache more workers
+    // make this SLOWER -- 3.0s on one thread against 4.3s on eighteen -- because
+    // every step is a `pread` on one file and the contention costs more than the
+    // walk. `HT2_FTAB_THREADS` exists for the case that inverts it, a block far
+    // too large to cache where the reads are real I/O and concurrency buys queue
+    // depth. That case has not been measured, so the default stays at one.
+    let threads = std::env::var("HT2_FTAB_THREADS").ok()
+        .and_then(|x| x.parse::<usize>().ok()).filter(|&x| x > 0).unwrap_or(1)
+        .min(roots.len().max(1));
     if threads <= 1 {
-        for &r in &roots { steps += walk(nav, ftab_chars, r, &mut leaves, &mut buf)?; }
+        for &r in &roots { steps += walk(nav, ftab_chars, r, &mut leaves, &mut sd)?; }
     } else {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results: std::sync::Mutex<(u64, Vec<Vec<(u32, u64, u64)>>)> =
@@ -675,13 +713,13 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
             std::thread::scope(|scope| {
                 for _ in 0..threads {
                     scope.spawn(move || {
-                        let mut buf = vec![0u8; nav.g.side_sz];
+                        let mut sd = Sides::new(nav.g.side_sz);
                         let mut mine: Vec<(u32, u64, u64)> = Vec::new();
                         let mut n = 0u64;
                         loop {
                             let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             if i >= roots_ref.len() { break; }
-                            match walk(nav, ftab_chars, roots_ref[i], &mut mine, &mut buf) {
+                            match walk(nav, ftab_chars, roots_ref[i], &mut mine, &mut sd) {
                                 Ok(s) => n += s,
                                 Err(e) => { *failed.lock().unwrap() = Some(e); break; }
                             }
