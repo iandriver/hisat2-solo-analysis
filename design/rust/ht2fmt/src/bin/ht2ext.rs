@@ -15,6 +15,8 @@
 mod graph;
 #[path = "../ext.rs"]
 mod ext;
+#[path = "../ckpt.rs"]
+mod ckpt;
 #[path = "../doubling.rs"]
 mod doubling;
 
@@ -33,7 +35,8 @@ fn main() -> std::io::Result<()> {
     let budget: usize = a.get(6).and_then(|x| x.parse().ok()).unwrap_or(4096);
     let chunk: u32 = env::var("HT2_CHUNK").ok().and_then(|x| x.parse().ok()).unwrap_or(1 << 18);
 
-    let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true)?;
+    let mut ck = ckpt::Ckpt::default();
+    let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true, &mut ck, false)?;
     println!("\n  resident ceiling during the run: one sort buffer of {} KB plus one key block",
              budget * ext::REC / 1024);
 

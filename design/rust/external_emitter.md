@@ -179,6 +179,63 @@ Three findings worth more than the speedup:
 - **`mergeUpdateRank` stays serial**, as it is in `gbwt_graph.h`, and is now 20%
   of the doubling. It is the one stage with a genuine prefix dependency.
 
+## Resume
+
+A build that runs for hours has to survive a failure at hour five. It resumes by
+being re-run with the same arguments; `HT2_FRESH=1` starts over, and
+`HT2_NO_RESUME=1` turns the whole thing off.
+
+The doubling was already checkpointed by its own shape -- at the end of a
+generation the node file is a complete, self-describing state -- so most of the
+work was making that true at finer grain and then proving it.
+
+**The node file alternates between two names.** A generation reads one and writes
+the other, so the state a checkpoint names is never the state the next step is
+overwriting. That cannot be had from a single `cur.bin` each generation consumes
+in place: once generation g's sorts begin, generation g-1 is gone and there is
+nothing to fall back to.
+
+**Each phase's input outlives the step that replaces it.** A generation is
+`sorted` -> `joined` -> `keyed` -> done, and every artifact stays until the mark
+for the phase after it lands. That is the cost: peak scratch 1.20 -> 1.73 GB at
+20 Mb, 82 bytes per path node against 57, which is why turning it off is an
+option rather than an argument.
+
+**The fingerprint includes the builder's own mtime and size.** Finishing half a
+build with a different version of the construction is the stale-binary failure
+again -- everything looks consistent and nothing is.
+
+### Proving it, rather than hoping
+
+Racing a `kill -9` finds bugs but cannot say which boundary it found them at, or
+prove a boundary was ever reached. `HT2_CRASH_AT` names a checkpoint boundary and
+`HT2_CRASH_GEN` narrows it to a generation, so `verify_resume.sh` visits every
+place a restart can land, on purpose, and finishes each one. It found four bugs
+that the random kills had only hinted at:
+
+- **`join_par` deleted its own inputs.** Harmless in a straight run, where the
+  caller deletes them anyway; fatal on a restart, which re-runs the join from
+  files that are already gone. The join produces nothing, the generation reports
+  zero nodes, and zero equals zero so the loop calls it converged.
+- **Convergence was recorded by a second save.** In the window between them the
+  state said "generation 10 done, keep going" -- and going on runs an eleventh
+  generation over a converged file, which converges again and puts a generation
+  in the curve that `hisat2-build` never had.
+- **`cur` was deleted before the checkpoint saying it was no longer needed.**
+  The other order says the node file is expendable before anything has recorded
+  what replaced it.
+- **Renaming `joined` onto the generation's output is not idempotent.** A restart
+  landing after it found `joined` already moved, cleared the destination, and
+  moved nothing onto it. Generations 1-3 have no second phase at all, so the join
+  now writes straight into the output and there is nothing to hand over.
+
+The guard that turned all four from silent into loud: **a generation that
+produces no nodes panics.** Without it they all look like early convergence.
+
+One thing is deliberately not resumable: the reference-graph build. It is a
+single stage with no internal boundary, so a crash inside it restarts it -- 30-60
+minutes at whole-genome scale against the hours the doubling would have cost.
+
 ## Measured
 
 All eight files, both widths, byte-identical against `hisat2-build` on every

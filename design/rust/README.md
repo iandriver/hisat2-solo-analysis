@@ -543,8 +543,14 @@ index widths, and on a 20 Mb reference where it uses 197 MB against
 ht2wg <reference.fa> <snp> <haplotype> <workdir> <out_prefix> [budget_records] [verify_prefix]
 ```
 
-`verify_wg.sh <fixture_dir>` runs the sweep; `HT2_LARGE=1` on either script
-switches to the 64-bit (`.ht2l`) half, which is what a whole-genome index is.
+It resumes: re-run the same command after a failure and it picks up from the
+last checkpoint. `HT2_FRESH=1` starts over, `HT2_NO_RESUME=1` turns it off and
+gives back the disk it costs.
+
+`verify_wg.sh <fixture_dir>` checks the output; `verify_resume.sh <fixture_dir>`
+crashes the build at every checkpoint boundary in every generation and checks
+that finishing it lands in the same place. `HT2_LARGE=1` on any of these switches
+to the 64-bit (`.ht2l`) half, which is what a whole-genome index is.
 
 See `external_emitter.md` for the design and `whole_genome_plan.md` for what a
 real whole-genome run still needs.

@@ -13,6 +13,8 @@
 mod graph;
 #[path = "../ext.rs"]
 mod ext;
+#[path = "../ckpt.rs"]
+mod ckpt;
 #[path = "../doubling.rs"]
 mod doubling;
 #[path = "../wgemit.rs"]
@@ -102,6 +104,60 @@ fn main() -> std::io::Result<()> {
     fs::create_dir_all(&wd)?;
     let mut timer = Timer::new();
 
+    // ---- resume ---------------------------------------------------------
+    // A whole-genome build runs for hours. It resumes by being re-run with the
+    // same arguments; the checkpoint is trusted only when its fingerprint
+    // matches, and that fingerprint covers this binary's own mtime and size, so
+    // a rebuild invalidates it rather than silently finishing a build that two
+    // different versions of the construction started. `HT2_FRESH=1` starts over.
+    // Resume costs one extra copy of the node file on disk -- 82 bytes per path
+    // node against 57 -- because each phase's input has to outlive the step that
+    // replaces it. `HT2_NO_RESUME=1` buys that back and gives up the ability to
+    // restart.
+    let resume = env::var("HT2_NO_RESUME").is_err();
+    let fp = ckpt::fingerprint(fa, snp, hap, large, chunk);
+    let mut ck = if env::var("HT2_FRESH").is_ok() || !resume { None }
+                 else { ckpt::load(&wd, &fp) }
+        .unwrap_or_default();
+    if !ck.stage.is_empty() {
+        println!("resuming: {} complete{}",
+                 match ck.stage.as_str() {
+                     "graph" => "reference graph".to_string(),
+                     "gen"   => format!("generation {}", ck.gen),
+                     "edges" => "generateEdges".to_string(),
+                     other   => other.to_string(),
+                 },
+                 if ck.phase.is_empty() { String::new() }
+                 else { format!(", phase {}", ck.phase) });
+    } else if ckpt::path(&wd).exists() {
+        println!("checkpoint does not match these inputs or this binary -- starting over");
+    }
+    ck.fingerprint = fp;
+    // Whatever a crash left that the checkpoint does not vouch for has to go. A
+    // half-written run or merge partition does not announce itself: the next
+    // file of the same name adopts its segments and the records turn up as
+    // though they belonged.
+    {
+        let mut keep: Vec<String> = vec!["nodes.bin".into(), "edges.bin".into()];
+        // Both node files, always. Whichever one a phase does not vouch for is
+        // rewritten from scratch by the step that follows, so keeping a partial
+        // one costs nothing -- and working out which is which per phase is the
+        // sort of reasoning that gets one case wrong.
+        keep.push("cur0.bin".into());
+        keep.push("cur1.bin".into());
+        match ck.phase.as_str() {
+            "sorted" => { keep.push("by_to.bin".into()); keep.push("by_from.bin".into()); }
+            "joined" => { keep.push("joined.bin".into()); }
+            "keyed"  => { keep.push("sorted.bin".into()); }
+            _ => {}
+        }
+        if ck.stage == "edges" {
+            for f in ["rows.bin", "nodeinfo.bin", "floc.bin"] { keep.push(f.into()); }
+        }
+        let refs: Vec<&str> = keep.iter().map(|s| s.as_str()).collect();
+        ckpt::clean(&wd, &refs);
+    }
+
     // ---- the reference front end, .3 and .4 -----------------------------
     // Done first and dropped before the graph stage, so the joined text is not
     // resident twice.
@@ -125,10 +181,29 @@ fn main() -> std::io::Result<()> {
     timer.mark("reference, .3/.4");
 
     // ---- the path graph, fragmented and external ------------------------
-    let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true)?;
-    // generate_edges consumes `cur` -- it reads it once, to sort by `from`
+    let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true, &mut ck, resume)?;
     timer.mark("graph + doubling");
-    let rs = wgemit::generate_edges(&wd, &d.cur, budget, true)?;
+    // generate_edges consumes `cur` -- it reads it once, to sort by `from` --
+    // so its own checkpoint has to be the thing that lets a restart skip it
+    let rs = if ck.stage == "edges" {
+        println!("\ngenerateEdges: from checkpoint -- {} path nodes, {} path edges",
+                 ck.e_nodes + 1, ck.e_gbwt);
+        wgemit::Rows { rows: wd.join("rows.bin"), nodeinfo: wd.join("nodeinfo.bin"),
+                       floc: wd.join("floc.bin"), n_nodes: ck.e_nodes,
+                       gbwt_len: ck.e_gbwt, bucket: ck.e_bucket }
+    } else {
+        let rs = wgemit::generate_edges(&wd, &d.cur, budget, true, resume)?;
+        ck.stage = "edges".into();
+        ck.e_nodes = rs.n_nodes; ck.e_gbwt = rs.gbwt_len; ck.e_bucket = rs.bucket;
+        // Checkpoint BEFORE dropping `cur`, not after. In between, the state on
+        // disk says the doubling is done and the node file is still needed --
+        // which is true. The other order says the node file is expendable
+        // before anything has recorded what replaced it.
+        if resume { ckpt::save(&wd, &ck)?; }
+        ckpt::crash_point("edges", 0);
+        ext::seg_remove(&d.cur);
+        rs
+    };
     timer.mark("generateEdges");
     let g = wgemit::geom(rs.gbwt_len, line_rate, w);
 
@@ -261,6 +336,7 @@ fn main() -> std::io::Result<()> {
         for f in ["nodes.bin", "edges.bin", "rows.bin", "nodeinfo.bin", "floc.bin"] {
             let _ = fs::remove_file(wd.join(f));
         }
+        let _ = fs::remove_file(ckpt::path(&wd));
     }
 
     // ---- verify ---------------------------------------------------------

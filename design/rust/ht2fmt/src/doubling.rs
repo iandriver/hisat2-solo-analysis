@@ -18,6 +18,7 @@
 
 use super::ext;
 use super::ext::{By, Rec, SegReader, SegWriter, SORTED};
+use super::ckpt;
 use super::graph;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -175,8 +176,9 @@ fn join_par(a_by_to: &Path, b_by_from: &Path, out: &Path, gen: u32, budget: usiz
         ext::seg_append(out, &parts[p])?;
         n += c;
     }
-    ext::seg_remove(a_by_to);
-    ext::seg_remove(b_by_from);
+    // The inputs are NOT removed here. The caller removes them once the phase
+    // that produced this output is checkpointed -- a restart before that point
+    // re-runs the join, and it needs them.
     Ok(n)
 }
 
@@ -396,7 +398,7 @@ fn merge_update_rank_gen4(src: &Path, dst: &Path) -> std::io::Result<(u64, u64, 
 ///
 /// Three sequential reads of `cur` and one write, against two full external
 /// sorts and a merge.
-fn join_late(cur: &Path, joined: &Path, wd: &Path, gen: u32, budget: usize)
+fn join_late(cur: &Path, joined: &Path, wd: &Path, gen: u32, budget: usize, resume: bool)
     -> std::io::Result<u64>
 {
     let (un, mini) = (wd.join("un.bin"), wd.join("mini.bin"));
@@ -421,7 +423,9 @@ fn join_late(cur: &Path, joined: &Path, wd: &Path, gen: u32, budget: usize)
     let tail = wd.join("tail.bin");
     let mut n_tail = 0u64;
     {
-        let mut r = SegReader::open(cur, true)?;
+        // Not consumed when resume is on: the caller deletes `cur` only once
+        // `joined` is whole, which is what a restart falls back to.
+        let mut r = SegReader::open(cur, !resume)?;
         let mut w = SegWriter::create(&mini)?;
         let mut t = SegWriter::create(&tail)?;
         while let Some(n) = r.next()? {
@@ -466,19 +470,53 @@ pub struct Doubled {
 /// `sortEdgesFrom` order and nodes are in id order, so the label lookup each
 /// edge needs is a single forward pass, not a random probe.
 pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
-           verbose: bool) -> std::io::Result<Doubled>
+           verbose: bool, ck: &mut ckpt::Ckpt, resume: bool) -> std::io::Result<Doubled>
 {
     use std::io::Read;
     fs::create_dir_all(wd)?;
-    let cur = wd.join("cur.bin");
+    // The node file alternates between two names. A generation reads one and
+    // writes the other, so the state a checkpoint names is never the state the
+    // next step is overwriting -- which is the whole of what makes a restart
+    // safe, and cannot be had from a single `cur.bin` that each generation
+    // consumes in place.
+    let cur_of = |g: u32| wd.join(format!("cur{}.bin", g % 2));
     let code = |l: u8| -> u64 { match l { b'A' => 0, b'C' => 1, b'G' => 2, b'T' => 3,
                                           b'Y' => 4, _ => 5 } };
 
-    let g = graph::build_fragmented_to_disk(fa, snp, hap, chunk, wd)?;
-    if verbose {
-        println!("graph on disk: {} nodes, {} edges, chunk {} kb", g.n_nodes, g.n_edges, chunk / 1024);
+    let resumed = !ck.stage.is_empty();
+    // Once the loop has converged there is nothing left to re-enter, and the
+    // node file is gone -- `generateEdges` consumed it. Coming back in would run
+    // generation 11 over an empty file, converge again on nothing, and hand a
+    // zero-node graph to everything downstream. It looks like progress.
+    if ck.stage == "doubled" || ck.stage == "edges" {
+        if verbose {
+            println!("doubling: from checkpoint -- {} generations, {} path nodes",
+                     ck.curve.len(), ck.path_nodes);
+        }
+        return Ok(Doubled {
+            cur: cur_of(ck.gen), n_path_nodes: ck.path_nodes, curve: ck.curve.clone(),
+            graph: graph::GraphOnDisk { n_nodes: ck.g_nodes, n_edges: ck.g_edges,
+                                        last_node: ck.g_last, text_len: ck.g_text },
+        });
     }
-    {
+    let g = if resumed {
+        graph::GraphOnDisk { n_nodes: ck.g_nodes, n_edges: ck.g_edges,
+                             last_node: ck.g_last, text_len: ck.g_text }
+    } else {
+        let g = graph::build_fragmented_to_disk(fa, snp, hap, chunk, wd)?;
+        ck.stage = "graph".into();
+        ck.g_nodes = g.n_nodes; ck.g_edges = g.n_edges;
+        ck.g_last = g.last_node; ck.g_text = g.text_len;
+        if resume { ckpt::save(wd, ck)?; }
+        ckpt::crash_point("graph", 0);
+        g
+    };
+    if verbose {
+        println!("graph on disk: {} nodes, {} edges, chunk {} kb{}", g.n_nodes, g.n_edges,
+                 chunk / 1024, if resumed { " (from checkpoint)" } else { "" });
+    }
+    let cur = cur_of(ck.gen);
+    if ck.gen == 0 {
         let mut nf = std::io::BufReader::with_capacity(1 << 20, fs::File::open(wd.join("nodes.bin"))?);
         let mut ef = std::io::BufReader::with_capacity(1 << 20, fs::File::open(wd.join("edges.bin"))?);
         let mut w = SegWriter::create(&cur)?;
@@ -505,26 +543,29 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         w.finish()?;
     }
 
-    let n0 = ext::seg_len(&cur);
-    let mut curve: Vec<(u32, u64, u64, u64)> = vec![(0, n0, n0, 0)];
-    if verbose {
+    let n0 = ext::seg_len(&cur_of(0));
+    let mut curve: Vec<(u32, u64, u64, u64)> = if ck.gen > 0 { ck.curve.clone() }
+                                               else { vec![(0, n0, n0, 0)] };
+    if verbose && ck.gen == 0 {
         println!("Generation 0 ({n0} -> {n0} nodes, 0 ranks)   [budget {budget} records = {} KB]",
                  budget * ext::REC / 1024);
     }
 
     let (by_to, by_from, joined, sorted_k) =
         (wd.join("by_to.bin"), wd.join("by_from.bin"), wd.join("joined.bin"), wd.join("sorted.bin"));
-    let mut gen = 0u32;
-    let mut n_path_nodes = n0;
+    let mut gen = ck.gen;
+    let mut n_path_nodes = if ck.gen > 0 { ck.path_nodes } else { n0 };
     // Where the doubling's time actually goes, per phase, summed over all
     // generations -- the question of what to thread first is not answerable
     // from the source.
     let (mut t_sort, mut t_join, mut t_rank) = (0f64, 0f64, 0f64);
     let (mut p_sort, mut p_join, mut p_rank) = (0f64, 0f64, 0f64);
     // nodes already marked sorted coming into the next generation
-    let mut n_sorted: u64 = 0;
+    let mut n_sorted: u64 = ck.sorted;
     loop {
         gen += 1;
+        let cur_in = cur_of(gen - 1);
+        let cur_out = cur_of(gen);
         let mut t = std::time::Instant::now();
         // `cur` is dead the moment both orderings of it exist -- the join reads
         // `by_to` and `by_from`, and whichever branch follows rewrites `cur`
@@ -538,36 +579,70 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         let late = gen > 4 && n_sorted > 0
                    && unsorted * 4 < n_path_nodes
                    && unsorted <= budget as u64;
-        let temp = if late {
-            let n = join_late(&cur, &joined, wd, gen, budget)?;
-            t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-            n
-        } else {
-            ext::sort_external(&cur, &by_to, By::To, budget, wd, false)?;
-            ext::sort_external(&cur, &by_from, By::From, budget, wd, true)?;
-            t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-            let nt = ext::threads();
-            let n = if nt > 1 {
-                join_par(&by_to, &by_from, &joined, gen, budget, nt)?
+        // ---- phase 1: everything up to `joined` -------------------------
+        // `cur_in` is NOT consumed. It is the only state a restart can fall back
+        // to until `joined` is whole, and consuming it to save a copy is exactly
+        // what makes a crash here unrecoverable.
+        // Generations 1-3 have no second phase -- no key sort, no ranking -- so
+        // the join writes straight into the generation's output file and there
+        // is nothing to hand over afterwards. Renaming `joined` onto `cur_out`
+        // was the one step in a generation that could not be repeated: a restart
+        // landing after it found `joined` already moved, cleared the
+        // destination, and moved nothing onto it.
+        let out = if gen <= 3 { cur_out.clone() } else { joined.clone() };
+        let mut temp = ck.temp;
+        if ck.phase.is_empty() || ck.phase == "sorted" {
+            if late {
+                temp = join_late(&cur_in, &out, wd, gen, budget, resume)?;
+                t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
             } else {
-                let n = join(&by_to, &by_from, &joined, gen)?;
-                ext::seg_remove(&by_to);
-                ext::seg_remove(&by_from);
-                n
-            };
-            t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-            n
-        };
+                if ck.phase.is_empty() {
+                    ext::sort_external(&cur_in, &by_to, By::To, budget, wd, false)?;
+                    // Consumed only when resume is off. Keeping `cur_in` alive
+                    // across the two sorts is what costs the extra copy of the
+                    // node file -- and it is also the only thing a crash here
+                    // could fall back to.
+                    ext::sort_external(&cur_in, &by_from, By::From, budget, wd, !resume)?;
+                    if resume { ck.phase = "sorted".into(); ckpt::save(wd, ck)?; }
+                    ckpt::crash_point("sorted", gen);
+                }
+                t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
+                let nt = ext::threads();
+                temp = if nt > 1 {
+                    join_par(&by_to, &by_from, &out, gen, budget, nt)?
+                } else {
+                    let n = join(&by_to, &by_from, &out, gen)?;
+                    ext::seg_remove(&by_to);
+                    ext::seg_remove(&by_from);
+                    n
+                };
+                t_join += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
+            }
+            // Every generation records this, 1-3 included. Their output is
+            // `cur_out` rather than `joined`, but the point is the same: once it
+            // is whole, the join's inputs can go, and a restart that has not
+            // seen this mark will try to redo the join from files that are
+            // already gone.
+            if resume { ck.phase = "joined".into(); ck.temp = temp; ckpt::save(wd, ck)?; }
+            ckpt::crash_point("joined", gen);
+            ext::seg_remove(&by_to);
+            ext::seg_remove(&by_from);
+            ext::seg_remove(&cur_in);
+        }
 
+        // ---- phase 2: the key sort, then the ranking --------------------
         let (nodes, ranks) = if gen <= 3 {
-            ext::seg_rename(&joined, &cur)?;
             (temp, 0u64)
         } else {
-            ext::sort_external(&joined, &sorted_k, By::Key, budget, wd, true)?;
+            if ck.phase == "joined" || !resume {
+                ext::sort_external(&joined, &sorted_k, By::Key, budget, wd, !resume)?;
+                if resume { ck.phase = "keyed".into(); ckpt::save(wd, ck)?; }
+                ckpt::crash_point("keyed", gen);
+                ext::seg_remove(&joined);
+            }
             t_sort += t.elapsed().as_secs_f64(); t = std::time::Instant::now();
-            let (n, rk, ns) = if gen == 4 { merge_update_rank_gen4(&sorted_k, &cur)? }
-                              else        { merge_update_rank(&sorted_k, &cur)? };
-            ext::seg_remove(&sorted_k);
+            let (n, rk, ns) = if gen == 4 { merge_update_rank_gen4(&sorted_k, &cur_out)? }
+                              else        { merge_update_rank(&sorted_k, &cur_out)? };
             n_sorted = ns;
             (n, rk)
         };
@@ -580,12 +655,34 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
                      if late { ", late" } else { "" });
             p_sort = t_sort; p_join = t_join; p_rank = t_rank;
         }
+        if nodes == 0 {
+            panic!("generation {gen} produced no nodes -- its input was empty, \
+                    which means a restart lost state rather than resumed it");
+        }
         curve.push((gen, temp, nodes, ranks));
         n_path_nodes = nodes;
-        if gen > 3 && ranks == nodes { break; }
+        // The generation is finished only once `cur_out` is whole, so this is
+        // the last thing that happens in it and `sorted.bin` outlives it until
+        // then -- a restart between the two redoes `mergeUpdateRank` rather than
+        // finding both its input and its output half-written.
+        // Convergence is recorded by the SAME save that records the
+        // generation. Two saves leave a window in which the state says
+        // "generation 10 done, keep going" -- and going on runs an eleventh
+        // generation over a converged file, which converges again and puts a
+        // generation in the curve that the C++ never had.
+        let converged = gen > 3 && ranks == nodes;
+        ck.stage = if converged { "doubled".into() } else { "gen".to_string() };
+        ck.phase = String::new(); ck.gen = gen;
+        ck.curve = curve.clone(); ck.path_nodes = nodes; ck.sorted = n_sorted;
+        if resume { ckpt::save(wd, ck)?; }
+        ckpt::crash_point("gen", gen);
+        ext::seg_remove(&sorted_k);
+        ext::seg_remove(&joined);
+        if converged { break; }
         if gen > 64 { panic!("doubling did not converge"); }
     }
-    for p in [&by_to, &by_from, &joined, &sorted_k] { ext::seg_remove(p); }
+    let cur = cur_of(gen);
+    for p in [&by_to, &by_from, &joined, &sorted_k, &cur_of(gen + 1)] { ext::seg_remove(p); }
     if verbose {
         let tot = t_sort + t_join + t_rank;
         println!("  doubling phases: sort {:.1}s ({:.0}%), join {:.1}s ({:.0}%), mergeUpdateRank {:.1}s ({:.0}%)",

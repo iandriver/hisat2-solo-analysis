@@ -159,7 +159,7 @@ pub struct Rows {
 /// the path nodes a given edge lands on. Here that is a join between the edges
 /// keyed by their `to` and the path nodes keyed by their `from`, which is the
 /// same equi-join the doubling loop already runs this way.
-pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
+pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool, keep_cur: bool)
     -> std::io::Result<Rows>
 {
     let nodes_bin = wd.join("nodes.bin");
@@ -171,8 +171,10 @@ pub fn generate_edges(wd: &Path, cur: &Path, budget: usize, verbose: bool)
     let nbr = wd.join("nbr.bin");
 
     // (a) path nodes by `from`, which is what the `start[]` CSR indexes: for a
-    //     given reference node, the path nodes that hang off it.
-    ext::sort_external(cur, &nbf0, By::From, budget, wd, true)?;
+    //     given reference node, the path nodes that hang off it. Consumed unless
+    //     a restart may need to redo this whole stage, in which case the caller
+    //     deletes it once the stage is checkpointed.
+    ext::sort_external(cur, &nbf0, By::From, budget, wd, !keep_cur)?;
 
     // (b) give each path node the genomic position of its reference node, the
     //     way `n.to = b.nodes[n.from].1` does. `nodes.bin` is in id order and

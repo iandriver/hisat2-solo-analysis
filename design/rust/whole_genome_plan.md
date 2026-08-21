@@ -171,7 +171,7 @@ for what came out. Extrapolating to the 5,917,131,871 path nodes E3 measured:
 
 | | projected |
 |---|---|
-| scratch disk | **~255 GB** — 215 GB of node file, 40 GB of reference graph |
+| scratch disk | **~255 GB**, or ~360 GB with resume on (each phase's input outlives the step that replaces it) |
 | peak RSS | ~3.5-4.5 GB, nearly all of it the joined text |
 | wall | 3-6 h on eight threads, and I/O-bound rather than CPU-bound past that |
 | output | 11 GB |
