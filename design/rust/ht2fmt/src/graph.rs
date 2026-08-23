@@ -212,7 +212,13 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
                 for a in h.alts.iter_mut() { *a = back[*a as usize]; }
             }
         }
-        haps.sort_by_key(|h| (h.left, h.right));
+        // NOT a stable sort: see `gnusort` at the end of this file. `HT2_HAPSORT=stable`
+        // restores the old behaviour for comparison.
+        if std::env::var("HT2_HAPSORT").map(|v| v == "stable").unwrap_or(false) {
+            haps.sort_by_key(|h| (h.left, h.right));
+        } else {
+            gnusort::sort(&mut haps, &|a: &Hap, b: &Hap| (a.left, a.right) < (b.left, b.right));
+        }
     }
     Parsed { seqs, text, alts, haps, alt_names, alt_name_at,
              dropped_snps, dropped_haps, out_of_order_haps: 0 }
@@ -756,3 +762,162 @@ pub fn reverse_deterministic(nodes: &[(u8, u32)], edges: &[(u32, u32)]) -> usize
     by_to.windows(2).filter(|w| w[0] == w[1]).count()
 }
 
+/// libstdc++'s `std::sort`, reproduced exactly.
+///
+/// `_haplotypes` is ordered by `EList::sort` -> `std::sort` (`ds.h:830`) under a
+/// comparator that returns false for full `(left, right)` ties (`alt.h:223`).
+/// `std::sort` is NOT stable, so the order among tied haplotypes is unspecified
+/// and differs by standard library -- hisat2-build's own `.7` is not
+/// reproducible across platforms. The E3 index was built on Linux, so matching
+/// it byte for byte means matching libstdc++ specifically; a stable sort agrees
+/// with neither libstdc++ nor libc++ once ties exist.
+///
+/// This is introsort as libstdc++ implements it: quicksort with a median-of-3
+/// pivot moved to `first`, a recursion depth limit of `2*floor(log2(n))` after
+/// which it falls back to heapsort, a threshold of 16 below which partitioning
+/// stops, and a final insertion-sort pass over the whole range. Every step has
+/// to match, not just the algorithm class -- the tie order is a function of the
+/// exact swap sequence.
+pub mod gnusort {
+    const THRESHOLD: usize = 16;
+
+    /// Set by `sort` if the depth limit was ever hit. The heapsort fallback is
+    /// the least-tested branch here, so it is worth knowing whether it ran.
+    pub static HEAP_FALLBACKS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    pub fn sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], lt: &F) {
+        if v.is_empty() { return; }
+        let n = v.len();
+        let depth = 2 * (usize::BITS - 1 - n.leading_zeros());
+        introsort_loop(v, 0, n, depth, lt);
+        final_insertion_sort(v, lt);
+    }
+
+    fn introsort_loop<T, F: Fn(&T, &T) -> bool>(
+        v: &mut [T], first: usize, mut last: usize, mut depth: u32, lt: &F)
+    {
+        while last - first > THRESHOLD {
+            if depth == 0 {
+                HEAP_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // __partial_sort(first, last, last) == make_heap then sort_heap
+                make_heap(v, first, last, lt);
+                sort_heap(v, first, last, lt);
+                return;
+            }
+            depth -= 1;
+            let cut = unguarded_partition_pivot(v, first, last, lt);
+            introsort_loop(v, cut, last, depth, lt);
+            last = cut;
+        }
+    }
+
+    fn unguarded_partition_pivot<T, F: Fn(&T, &T) -> bool>(
+        v: &mut [T], first: usize, last: usize, lt: &F) -> usize
+    {
+        let mid = first + (last - first) / 2;
+        move_median_to_first(v, first, first + 1, mid, last - 1, lt);
+        unguarded_partition(v, first + 1, last, first, lt)
+    }
+
+    fn move_median_to_first<T, F: Fn(&T, &T) -> bool>(
+        v: &mut [T], result: usize, a: usize, b: usize, c: usize, lt: &F)
+    {
+        if lt(&v[a], &v[b]) {
+            if lt(&v[b], &v[c]) { v.swap(result, b); }
+            else if lt(&v[a], &v[c]) { v.swap(result, c); }
+            else { v.swap(result, a); }
+        } else if lt(&v[a], &v[c]) { v.swap(result, a); }
+        else if lt(&v[b], &v[c]) { v.swap(result, c); }
+        else { v.swap(result, b); }
+    }
+
+    /// The pivot sits at `pivot` (the range's original `first`) and the scan
+    /// starts one past it, so no swap here ever moves the pivot element.
+    fn unguarded_partition<T, F: Fn(&T, &T) -> bool>(
+        v: &mut [T], mut first: usize, mut last: usize, pivot: usize, lt: &F) -> usize
+    {
+        loop {
+            while lt(&v[first], &v[pivot]) { first += 1; }
+            last -= 1;
+            while lt(&v[pivot], &v[last]) { last -= 1; }
+            if first >= last { return first; }
+            v.swap(first, last);
+            first += 1;
+        }
+    }
+
+    fn final_insertion_sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], lt: &F) {
+        let n = v.len();
+        if n > THRESHOLD {
+            insertion_sort(v, 0, THRESHOLD, lt);
+            for i in THRESHOLD..n { linear_insert(v, i, lt); }
+        } else {
+            insertion_sort(v, 0, n, lt);
+        }
+    }
+
+    fn insertion_sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, last: usize, lt: &F) {
+        if first == last { return; }
+        for i in (first + 1)..last {
+            if lt(&v[i], &v[first]) {
+                // __move_backward3(first, i, i+1) then *first = val
+                v[first..=i].rotate_right(1);
+            } else {
+                linear_insert(v, i, lt);
+            }
+        }
+    }
+
+    /// `__unguarded_linear_insert`: shift down while the held value is smaller.
+    /// The swap form produces the same permutation as the C++ hole-and-move.
+    fn linear_insert<T, F: Fn(&T, &T) -> bool>(v: &mut [T], last: usize, lt: &F) {
+        let mut l = last;
+        while l > 0 && lt(&v[l], &v[l - 1]) { v.swap(l, l - 1); l -= 1; }
+    }
+
+    // ---- the heapsort fallback -----------------------------------------
+    fn adjust_heap<T, F: Fn(&T, &T) -> bool>(
+        v: &mut [T], first: usize, mut hole: usize, len: usize, lt: &F)
+    {
+        let top = hole;
+        let mut second = hole;
+        while second < (len - 1) / 2 {
+            second = 2 * (second + 1);
+            if lt(&v[first + second], &v[first + second - 1]) { second -= 1; }
+            v.swap(first + hole, first + second);
+            hole = second;
+        }
+        if len & 1 == 0 && second == (len - 2) / 2 {
+            second = 2 * (second + 1);
+            v.swap(first + hole, first + second - 1);
+            hole = second - 1;
+        }
+        // __push_heap
+        while hole > top {
+            let parent = (hole - 1) / 2;
+            if !lt(&v[first + parent], &v[first + hole]) { break; }
+            v.swap(first + hole, first + parent);
+            hole = parent;
+        }
+    }
+
+    fn make_heap<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, last: usize, lt: &F) {
+        let len = last - first;
+        if len < 2 { return; }
+        let mut parent = (len - 2) / 2;
+        loop {
+            adjust_heap(v, first, parent, len, lt);
+            if parent == 0 { return; }
+            parent -= 1;
+        }
+    }
+
+    fn sort_heap<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, mut last: usize, lt: &F) {
+        while last - first > 1 {
+            last -= 1;
+            v.swap(first, last);              // __pop_heap into the vacated slot
+            adjust_heap(v, first, 0, last - first, lt);
+        }
+    }
+}

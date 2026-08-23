@@ -35,3 +35,7 @@ path = "src/bin/ht2sa.rs"
 [[bin]]
 name = "ht2ftab"
 path = "src/bin/ht2ftab.rs"
+
+[[bin]]
+name = "ht2predict"
+path = "src/bin/ht2predict.rs"
