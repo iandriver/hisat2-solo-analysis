@@ -180,6 +180,28 @@ fn main() -> std::io::Result<()> {
              names.len(), frags.len());
     timer.mark("reference, .3/.4");
 
+    // HT2_REF_ONLY stops here. .3 and .4 are a pure function of the FASTA --
+    // no variants, no graph -- so diffing them against a known-good index is a
+    // minutes-long proof that the reference going in is the reference that
+    // came out, before committing hours to the graph stages.
+    if env::var("HT2_REF_ONLY").is_ok() {
+        println!("\nHT2_REF_ONLY: stopping after the reference front end");
+        println!("wrote {out}.3.{ext} ({} bytes), {out}.4.{ext} ({} bytes)",
+                 fs::metadata(format!("{out}.3.{ext}"))?.len(),
+                 fs::metadata(format!("{out}.4.{ext}"))?.len());
+        timer.report();
+        if let Some(v) = verify {
+            println!("\nagainst {v}:");
+            let mut ok = true;
+            for n in [3u32, 4] {
+                ok &= compare(&format!("{out}.{n}.{ext}"), &format!("{v}.{n}.{ext}"));
+            }
+            if !ok { process::exit(1); }
+            println!("\nREFERENCE MATCHES ({v}.3/.4 byte-identical)");
+        }
+        return Ok(());
+    }
+
     // ---- the path graph, fragmented and external ------------------------
     let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true, &mut ck, resume)?;
     timer.mark("graph + doubling");
