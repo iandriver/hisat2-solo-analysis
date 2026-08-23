@@ -154,10 +154,19 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
         let f: Vec<&str> = line.split('\t').collect();
         if f.len() < 5 { return; }
         let ids: Option<Vec<u32>> = f[4].split(',').map(|s| alt_id.get(s).copied()).collect();
-        let (l, r) = (joined(f[1], f[2].parse::<u32>().expect("hap left")),
-                      joined(f[1], f[3].parse::<u32>().expect("hap right")));
+        let (lc, rc) = (f[2].parse::<u32>().expect("hap left"),
+                        f[3].parse::<u32>().expect("hap right"));
+        let (l, r) = (joined(f[1], lc), joined(f[1], rc));
+        // gfm.h's `inside_Ns`: a haplotype is dropped when either end falls in
+        // an N run OR when the span crosses a fragment boundary. `joined`
+        // already rejects an end inside an N run; the span test is the second
+        // half, and it is what a single isolated N in the middle of a
+        // haplotype trips. Joined coordinates close up the N run, so an
+        // unbroken span is exactly one whose joined width still equals its
+        // chromosome width.
+        let same_frag = match (l, r) { (Some(a), Some(b)) => b - a == rc - lc, _ => false };
         match (ids, l, r) {
-            (Some(ids), Some(left), Some(right)) if !ids.is_empty() =>
+            (Some(ids), Some(left), Some(right)) if !ids.is_empty() && same_frag =>
                 haps.push(Hap { left, right, alts: ids }),
             _ => dropped_haps += 1,
         }
@@ -256,6 +265,10 @@ pub fn build_range_with(text: &[u8], alts: &[Alt], in_haps: &[Hap],
 
     // haplotypes wholly inside this range, with positions shifted local
     let off = a;
+    // `curr_pos`/`curr_len` in the C++ are a reference FRAGMENT, not a chunk of
+    // our choosing, and its `break` on a haplotype running past the window end
+    // is unreachable once haplotypes spanning a fragment boundary are dropped
+    // at parse time (below). So a plain containment filter is exact here.
     let haps: Vec<&Hap> = in_haps.iter().filter(|h| h.left >= a && h.right < b).collect();
     let mut out_of_order_haps = 0usize;
     for h in haps.into_iter() {
@@ -308,7 +321,16 @@ pub fn build_range_with(text: &[u8], alts: &[Alt], in_haps: &[Hap],
                     }
                     id_i += 1;
                     prev = Some(alt.typ);
-                    if alt.typ == ALT_INS { continue; }
+                    if alt.typ == ALT_INS {
+                        // The C++ is `for(j = left; j <= right; j++) { if(prev == INS) j--; ... }`,
+                        // so the increment lands BEFORE the bound test and the decrement after it.
+                        // An insertion on the haplotype's last position therefore ends the walk,
+                        // and a variant co-located with it is never applied. A bare `continue`
+                        // here re-tests the unchanged j and applies that variant -- two extra
+                        // edges per such site, 94,265 of them genome-wide.
+                        if j >= h.right { break; }
+                        continue;
+                    }
                 }
                 _ => {
                     nodes.push((b"ACGT"[text[j as usize] as usize], j));
@@ -733,3 +755,4 @@ pub fn reverse_deterministic(nodes: &[(u8, u32)], edges: &[(u32, u32)]) -> usize
     by_to.sort_unstable();
     by_to.windows(2).filter(|w| w[0] == w[1]).count()
 }
+
