@@ -33,20 +33,34 @@ const LOCAL_FTAB_CHARS: usize = 6;
 fn main() {
     let a: Vec<String> = env::args().collect();
     if a.len() < 2 { eprintln!("usage: ht2local <index_prefix>"); std::process::exit(2); }
-    let b5 = fs::read(format!("{}.5.ht2", a[1])).expect(".5.ht2");
-    let b6 = fs::read(format!("{}.6.ht2", a[1])).expect(".6.ht2");
+    // A 64-bit index is `.ht2l` and widens every `index_t` field to 8 bytes.
+    // `local_index_t` stays u16 at both widths -- a local index is sized so its
+    // gbwt fits in 16 bits -- so only nLocalGFMs and the per-index
+    // tidx/localOffset/joinedOffset move. Picking the width off the file that
+    // exists keeps one binary covering both fixture sets; reading a `.ht2l`
+    // with 4-byte fields is what made this checker skip the 64-bit sweep.
+    let large = fs::metadata(format!("{}.5.ht2l", a[1])).is_ok();
+    let ext = if large { "ht2l" } else { "ht2" };
+    let w = if large { 8usize } else { 4 };
+    let b5 = fs::read(format!("{}.5.{ext}", a[1])).expect(".5");
+    let b6 = fs::read(format!("{}.6.{ext}", a[1])).expect(".6");
     let u32a = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
     let u16a = |b: &[u8], o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap()) as usize;
+    let idxa = |b: &[u8], o: usize| -> u64 {
+        let mut v = [0u8; 8];
+        v[..w].copy_from_slice(&b[o..o + w]);
+        u64::from_le_bytes(v)
+    };
 
     let mut p = 0usize;
     assert_eq!(u32a(&b5, p), 1, "endianness sentinel"); p += 4;
-    let n_local = u32a(&b5, p) as usize; p += 4;
+    let n_local = idxa(&b5, p) as usize; p += w;
     let line_rate = u32a(&b5, p) as usize; p += 4;
     p += 4;
     let off_rate = u32a(&b5, p) as usize; p += 4;
     let ftab_chars = u32a(&b5, p) as usize; p += 4;
     let _flags = u32a(&b5, p); p += 4;
-    println!("{}.5.ht2: {} local indexes, lineRate {}, offRate {}, ftabChars {}",
+    println!("{}.5.{ext}: {} local indexes, lineRate {}, offRate {}, ftabChars {}",
              a[1], n_local, line_rate, off_rate, ftab_chars);
     assert_eq!(ftab_chars, LOCAL_FTAB_CHARS);
 
@@ -56,9 +70,9 @@ fn main() {
     let (mut tot_len, mut tot_gbwt, mut graphs, mut linears) = (0usize, 0usize, 0usize, 0usize);
 
     for i in 0..n_local {
-        let _tidx = u32a(&b5, p); p += 4;
-        let _loff = u32a(&b5, p); p += 4;
-        let _joff = u32a(&b5, p); p += 4;
+        let _tidx = idxa(&b5, p); p += w;
+        let _loff = idxa(&b5, p); p += w;
+        let _joff = idxa(&b5, p); p += w;
         let len = u16a(&b5, p); p += 2;
         let gbwt_len = u16a(&b5, p); p += 2;
         let num_nodes = u16a(&b5, p); p += 2;

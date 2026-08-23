@@ -36,13 +36,13 @@ fn main() -> std::io::Result<()> {
         let d = (0..n).filter(|&i| ours[i] != theirs[i]).count();
         let first = (0..n).find(|&i| ours[i] != theirs[i]);
         if d == 0 && ours.len() == theirs.len() {
-            println!("{name}.ht2: BYTE-IDENTICAL ({} bytes)", ours.len());
+            println!("{name}.{ext}: BYTE-IDENTICAL ({} bytes)", ours.len());
         } else {
             bad = true;
             // Keep the mismatching output so the differing bytes can be read
             // back with the same parser that reads theirs.
             let _ = fs::write(format!("{}.ours{}.{ext}", a[4], name), ours.as_slice());
-            println!("{name}.ht2: {} of {n} bytes match (ours {} bytes, theirs {}){}",
+            println!("{name}.{ext}: {} of {n} bytes match (ours {} bytes, theirs {}){}",
                      n - d, ours.len(), theirs.len(),
                      match first { Some(f) => format!("; first differing byte at {f}"), None => String::new() });
         }
