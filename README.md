@@ -84,6 +84,26 @@ unbounded above 368.8 GB rather than measured. This is a limitation of HISAT2's
 unbounded prefix-doubling construction; GCSA2 solves the same problem with
 order-bounded, external-memory construction.
 
+### The whole-genome index builds in ~11 GB, byte for byte (`design/rust`)
+
+The external builder reproduces that index — all eight files, 8.9 GB, 64-bit —
+**byte-identically, in ~11 GB against `hisat2-build`'s measured 671 GB**, in
+17.7 h on one external SSD. No cloud instance, no vCPU quota increase. (RSS was
+sampled during the run, not maximised over it; the sort budget caps it at 19 GB.)
+
+That answers the construction limit noted above inside HISAT2's own format
+rather than by moving to GCSA2: the prefix doubling runs as an external
+sort-merge join, so peak memory follows the sort budget instead of the node
+count.
+
+Six construction bugs had to be fixed first, none of them reachable below
+chromosome scale — every fixture is a single contig with no N runs and no
+co-located variants. Two were in the global graph, three in which variants a
+local-index window keeps, and one was not a defect at all: `.7`'s haplotype
+order comes from an unstable `std::sort` under a comparator that admits ties,
+so `hisat2-build`'s own `.7` is not reproducible across standard library
+implementations.
+
 ### Parity and throughput (`analysis/cmp`)
 
 Mouse 10x, 10M reads, same machine and input: HISAT2-solo **51.2 s / 5.18 GB**
@@ -214,6 +234,8 @@ analysis/bench       human benchmarks: footprint vs STAR, concordance vs CellRan
                      HLA recovery across two ancestries (H1, H2)
 analysis/probe       build-outcome prediction; where variant loss lands
 analysis/aws         cloud build stages and reports (chr1 probe, whole-genome attempts)
+design/rust          external index builder: byte-identical whole-genome construction
+design/e3            the 64-bit whole-genome C++ build this is verified against
 upstream/            the two upstream issue writeups
 ```
 

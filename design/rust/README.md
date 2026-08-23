@@ -494,7 +494,8 @@ those arrays live.
    the one that brings `.5`/`.6` into scope.
 4. chr1 against the three `analysis/hap` variant sets, matching measured retention.
 5. Alignment equivalence: SAM byte-identical at `-p 1 --seed 0 --reorder`.
-6. Whole genome, where no C++ reference output exists.
+6. ~~Whole genome, where no C++ reference output exists.~~ **Done** — all
+   eight files byte-identical against the E3 index (`design/e3`).
 
 ## Fixtures
 
@@ -552,5 +553,38 @@ crashes the build at every checkpoint boundary in every generation and checks
 that finishing it lands in the same place. `HT2_LARGE=1` on any of these switches
 to the 64-bit (`.ht2l`) half, which is what a whole-genome index is.
 
-See `external_emitter.md` for the design and `whole_genome_plan.md` for what a
-real whole-genome run still needs.
+See `external_emitter.md` for the design and `whole_genome_plan.md` for the
+measurements behind it.
+
+### Whole genome, done
+
+GRCh38 primary assembly with 14.9M SNPs and 16.3M phased haplotypes, 64-bit:
+**all eight files byte-identical** to the index `hisat2-build` produced, in
+17.7 h on one external SSD in ~11 GB against that build's measured 671 GB —
+RSS sampled during the run rather than maximised over it, with the sort budget
+capping it at 19 GB. All
+23 generations matched its curve, ending at 5,917,131,871 path nodes. Scratch
+peaked at ~325 GB, and in `generateEdges` rather than at the generation-11 node
+peak (~139 GB) — size a disk from the emit stage, not the doubling.
+
+Six construction bugs had to be fixed to get there, none reachable below
+chromosome scale, since every fixture is a single contig with no N runs and no
+co-located variants. Two in the global graph, three in local-index window
+selection, and one that is not a defect: `.7`'s haplotype order comes from an
+unstable `std::sort` under a comparator that admits `(left, right)` ties, so
+`hisat2-build`'s own `.7` is not reproducible across standard library
+implementations. `gnusort` reproduces libstdc++'s introsort to match it;
+`HT2_HAPSORT=stable` opts out.
+
+Two tools made that tractable, both exploiting stages that depend only on the
+parse and not on the graph, so they answer in seconds against an index that
+already exists instead of after a 17.7 h build:
+
+```bash
+ht2predict <reference.fa> <snp> <haplotype> <index.7.ht2l>       # rebuild and diff .7
+ht2win     <reference.fa> <snp> <haplotype> <index.5.ht2l> <win>[,<win>...]
+```
+
+`HT2_REF_ONLY=1` on `ht2wg` stops after `.3`/`.4`, which is enough to prove the
+reference going in is the one an existing index was built from before spending
+the hours on the rest.
