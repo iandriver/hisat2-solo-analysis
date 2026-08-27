@@ -1,0 +1,80 @@
+chrX genes in annotation: 2484
+
+=== GM12878: paired alt fraction, non-PAR, depth>=10, n=208
+    linear               0.4711
+    snp_invented         0.4842
+    snp_real_Xbroken     0.4701
+    snp_real_Xfixed      0.4840
+    snp_invented         vs linear +0.01308  84 up / 3 down  z=+8.7
+    snp_real_Xbroken     vs linear -0.00104  12 up / 19 down  z=-1.3
+    snp_real_Xfixed      vs linear +0.01290  86 up / 4 down  z=+8.6
+
+=== GM12878: paired alt fraction, non-PAR, depth>=20, n=86
+    linear               0.4025
+    snp_invented         0.4157
+    snp_real_Xbroken     0.4029
+    snp_real_Xfixed      0.4147
+    snp_invented         vs linear +0.01321  44 up / 1 down  z=+6.4
+    snp_real_Xbroken     vs linear +0.00039  10 up / 9 down  z=+0.2
+    snp_real_Xfixed      vs linear +0.01220  45 up / 2 down  z=+6.3
+
+=== GM12878: X-fixed minus X-broken, non-PAR, depth>=10, n=213
+    mean +0.01369  87 up / 1 down / 125 unchanged  z=+9.2
+=== GM12878: X-fixed minus X-broken, non-PAR, depth>=20, n=88
+    mean +0.01154  41 up / 0 down / 47 unchanged  z=+6.4
+
+=== GM12878: X-inactivation skewing, n=227 non-PAR sites depth>=10
+    mean hap2 fraction 0.4732  median 0.4286
+    hap1-only 75 (33.0%)  hap2-only 54 (23.8%)
+    -> 57% monoallelic, split BOTH ways: not clonal skewing
+      depth>=20  : 25 mono / 72 bi (26% mono)
+      depth>=50  : 9 mono / 24 bi (27% mono)
+      depth>=100 : 7 mono / 13 bi (35% mono)
+
+=== GM12878: escape-like genes (>=2 sites, depth>=20, hap frac 0.30-0.70)
+    linear                 5  ['DIAPH2', 'EIF2S3', 'PRKX', 'TCEANC', 'TRAPPC2']
+    snp_invented           6  ['DIAPH2', 'EIF2S3', 'PRKX', 'TCEANC', 'TRAPPC2', 'ZFX']
+    snp_real_Xbroken       5  ['DIAPH2', 'EIF2S3', 'PRKX', 'TCEANC', 'TRAPPC2']
+    snp_real_Xfixed        6  ['DIAPH2', 'EIF2S3', 'PRKX', 'TCEANC', 'TRAPPC2', 'ZFX']
+    X-fixed vs linear   gained ['ZFX']  lost []
+    X-fixed vs X-broken gained ['ZFX']  lost []
+
+=== GM18502: paired alt fraction, non-PAR, depth>=10, n=349
+    linear               0.4417
+    snp_invented         0.4479
+    snp_real_Xbroken     0.4418
+    snp_real_Xfixed      0.4477
+    snp_invented         vs linear +0.00620  61 up / 5 down  z=+6.9
+    snp_real_Xbroken     vs linear +0.00013  14 up / 10 down  z=+0.8
+    snp_real_Xfixed      vs linear +0.00600  64 up / 5 down  z=+7.1
+
+=== GM18502: paired alt fraction, non-PAR, depth>=20, n=176
+    linear               0.4483
+    snp_invented         0.4554
+    snp_real_Xbroken     0.4487
+    snp_real_Xfixed      0.4556
+    snp_invented         vs linear +0.00716  42 up / 4 down  z=+5.6
+    snp_real_Xbroken     vs linear +0.00040  12 up / 8 down  z=+0.9
+    snp_real_Xfixed      vs linear +0.00734  45 up / 4 down  z=+5.9
+
+=== GM18502: X-fixed minus X-broken, non-PAR, depth>=10, n=353
+    mean +0.00519  61 up / 5 down / 287 unchanged  z=+6.9
+=== GM18502: X-fixed minus X-broken, non-PAR, depth>=20, n=179
+    mean +0.00755  45 up / 4 down / 130 unchanged  z=+5.9
+
+=== GM18502: X-inactivation skewing, n=378 non-PAR sites depth>=10
+    mean hap2 fraction 0.4741  median 0.4435
+    hap1-only 149 (39.4%)  hap2-only 133 (35.2%)
+    -> 75% monoallelic, split BOTH ways: not clonal skewing
+      depth>=20  : 134 mono / 53 bi (72% mono)
+      depth>=50  : 65 mono / 22 bi (75% mono)
+      depth>=100 : 34 mono / 11 bi (76% mono)
+
+=== GM18502: escape-like genes (>=2 sites, depth>=20, hap frac 0.30-0.70)
+    linear                 8  ['CHM', 'FTX', 'KDM6A', 'PHF8', 'PRKX', 'SEPTIN6', 'SMC1A', 'ZFX']
+    snp_invented           8  ['CHM', 'FTX', 'KDM6A', 'PHF8', 'PRKX', 'SEPTIN6', 'SMC1A', 'ZFX']
+    snp_real_Xbroken       7  ['FTX', 'KDM6A', 'PHF8', 'PRKX', 'SEPTIN6', 'SMC1A', 'ZFX']
+    snp_real_Xfixed        9  ['CHM', 'EIF1AX', 'FTX', 'KDM6A', 'PHF8', 'PRKX', 'SEPTIN6', 'SMC1A', 'ZFX']
+    X-fixed vs linear   gained ['EIF1AX']  lost []
+    X-fixed vs X-broken gained ['CHM', 'EIF1AX']  lost []
+

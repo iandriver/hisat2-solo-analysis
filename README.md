@@ -84,6 +84,30 @@ unbounded above 368.8 GB rather than measured. This is a limitation of HISAT2's
 unbounded prefix-doubling construction; GCSA2 solves the same problem with
 order-bounded, external-memory construction.
 
+### Variant-aware alignment recovers X-inactivation escape genes linear misses (`analysis/xci`)
+
+Escape is detected as biallelic expression at heterozygous sites — an
+allele-fraction measurement, and the published catalogues are built on linear
+alignment. A graph index carrying chrX variants recovers **ZFX** (European donor)
+and **EIF1AX** (Yoruba donor), both established escapees, and loses none.
+
+The mechanism control is exact. An index with **no non-PAR chrX variants** moves
+the allele fraction by 0.0001–0.001 (|z| ≤ 1.3); the same index with them added
+moves it by 0.006–0.013 (z = +5.9 to +8.6). Sites move up and essentially never
+down — 1 and 5 down against 87 and 61 up.
+
+This needed chrX repaired first: the panel carried 184 variants/Mb on chrX
+against an autosome mean of 5,158, all in PAR1, because
+`hisat2_extract_snps_haplotypes_VCF.py` hardcodes diploid genotypes and cannot
+read the haploid male calls that non-PAR chrX carries in a phased panel. It
+crashes *after* writing what it processed, leaving a plausible file holding PAR1
+only.
+
+Thin, and honestly so: 1–2 genes per donor, and the 1000 Genomes chrX genotypes
+carry enough error that 26–35% (CEU) and 72–76% (YRI) of "het" sites read
+monoallelic at high depth. Gene-level aggregation tolerates that; site-level work
+does not. A pilot with a working mechanism, not a corrected catalogue.
+
 ### The whole-genome index builds in ~11 GB, byte for byte (`design/rust`)
 
 The external builder reproduces that index — all eight files, 8.9 GB, 64-bit —
@@ -233,6 +257,7 @@ analysis/bias        reference-bias dose-response across retention levels
 analysis/bench       human benchmarks: footprint vs STAR, concordance vs CellRanger,
                      HLA recovery across two ancestries (H1, H2)
 analysis/probe       build-outcome prediction; where variant loss lands
+analysis/xci         X-inactivation escape, linear vs graph; the chrX panel repair
 analysis/aws         cloud build stages and reports (chr1 probe, whole-genome attempts)
 design/rust          external index builder: byte-identical whole-genome construction
 design/e3            the 64-bit whole-genome C++ build this is verified against

@@ -1,0 +1,15 @@
+725c725,736
+<                             P1, P2 = genotype[0], genotype[2]
+---
+>                             # chrX outside the pseudoautosomal regions is haploid in
+>                             # males, so the 1000 Genomes panel mixes "0"/"1" with
+>                             # "0|1" in the same record. Indexing [2] unconditionally
+>                             # raises IndexError on the first haploid call, after the
+>                             # diploid records have already been written -- which
+>                             # leaves a plausible-looking file holding PAR1 only.
+>                             # Treat a single call as homozygous: haplotypes are
+>                             # de-duplicated with set() below, so the duplicated
+>                             # chromosome adds no weight, and keeping the count fixed
+>                             # at 2 per genome is what the haplotype logic requires.
+>                             P1 = genotype[0]
+>                             P2 = genotype[2] if len(genotype) > 2 else genotype[0]
