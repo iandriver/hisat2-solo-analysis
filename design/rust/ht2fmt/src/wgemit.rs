@@ -35,6 +35,22 @@ pub fn label_index(l: u8) -> u64 {
 /// `w` is `sizeof(index_t)`: a large index reserves 48 bytes per side for its
 /// six tallies rather than 24, which is why `hisat2-build-l` also moves the
 /// default line rate from 7 to 8.
+///
+/// HISAT2 has TWO side encodings and picks between them silently
+/// (`_linearFM = (len + 1 == gbwtLen || gbwtLen == 0)`, gfm.h:149). An index
+/// with no variants has exactly one node per reference base plus the terminator,
+/// so it trips that test and is written as a plain FM index:
+///
+/// | | graph | linearFM |
+/// |---|---|---|
+/// | trailing tallies | 6 (`F_locSave`, `M_occSave`, `occ[0..3]`) | 4 (`occ[0..3]`) |
+/// | `sideGbwtSz` | `sideSz - 6w` | `sideSz - 4w` |
+/// | rows per side | `sideGbwtSz << 1` | `sideGbwtSz << 2` |
+/// | `gbwtSz` | `gbwtLen/2 + 1` | `gbwtLen/4 + 1` |
+/// | side body | BWT + F bitvector + M bitvector | BWT only |
+///
+/// The linear form has no F/M bitvectors at all, because a linear FM has no
+/// node structure to navigate: `LF` is the textbook `fchr[c] + occ(row, c)`.
 #[derive(Clone, Copy)]
 pub struct Geom {
     pub side_sz: usize,
@@ -43,15 +59,33 @@ pub struct Geom {
     pub num_sides: usize,
     pub gbwt_tot: usize,
     pub w: usize,
+    /// gfm.h:149 -- true when there are no variants, so no graph to encode.
+    pub linear: bool,
 }
 
-pub fn geom(gbwt_len: u64, line_rate: u32, w: usize) -> Geom {
+impl Geom {
+    /// Number of trailing `index_t` tallies per side.
+    #[inline] pub fn n_tally(&self) -> usize { if self.linear { 4 } else { 6 } }
+    /// Byte offset of the first trailing tally within a side.
+    #[inline] pub fn tally_base(&self) -> usize { self.side_sz - self.n_tally() * self.w }
+    /// Index of `occ[c]` among the trailing tallies.
+    #[inline] pub fn occ_slot(&self, c: usize) -> usize {
+        if self.linear { c } else { 2 + c }
+    }
+}
+
+pub fn geom(gbwt_len: u64, line_rate: u32, w: usize, linear: bool) -> Geom {
     let side_sz = 1usize << line_rate;
-    let side_gbwt_sz = side_sz - 6 * w;
-    let gbwt_sz = (gbwt_len / 2 + 1) as usize;
+    let (side_gbwt_sz, rows_per_side, gbwt_sz) = if linear {
+        let s = side_sz - 4 * w;
+        (s, s << 2, (gbwt_len / 4 + 1) as usize)
+    } else {
+        let s = side_sz - 6 * w;
+        (s, s << 1, (gbwt_len / 2 + 1) as usize)
+    };
     let num_sides = (gbwt_sz + side_gbwt_sz - 1) / side_gbwt_sz;
-    Geom { side_sz, side_gbwt_sz, rows_per_side: side_gbwt_sz * 2, num_sides,
-           gbwt_tot: num_sides * side_sz, w }
+    Geom { side_sz, side_gbwt_sz, rows_per_side, num_sides,
+           gbwt_tot: num_sides * side_sz, w, linear }
 }
 
 /// `writeIndex<index_t>` — 4 or 8 bytes little-endian.
@@ -394,6 +428,10 @@ pub struct BlockOut {
 /// bitvector at 8 rows/byte with `F_bpi = bpi + ((sideCur & 1) << 2)`, then M
 /// the same way. The final 6 `index_t` are `F_locSave`, `M_occSave` and
 /// `occSave[0..3]` — the values as of the START of the side.
+///
+/// A `linear` side (see `Geom`) drops both bitvectors: all `sideGbwtSz` bytes
+/// are BWT, and the trailer is just `occSave[0..3]`. The M walk still runs,
+/// because `.2`'s SA sampling is driven by it in both forms.
 pub fn write_block(rs: &Rows, g: Geom, off_rate: u32,
                    w1: &mut impl Write, w2: &mut impl Write) -> std::io::Result<BlockOut>
 {
@@ -420,8 +458,10 @@ pub fn write_block(rs: &Rows, g: Geom, off_rate: u32,
     for s in 0..g.num_sides {
         for b in side.iter_mut() { *b = 0; }
         {
-            let base = g.side_sz - 6 * g.w;
-            for (k, v) in [f_loc, m_occ, occ[0], occ[1], occ[2], occ[3]].iter().enumerate() {
+            let base = g.tally_base();
+            let tal: &[u64] = if g.linear { &[occ[0], occ[1], occ[2], occ[3]] }
+                              else { &[f_loc, m_occ, occ[0], occ[1], occ[2], occ[3]] };
+            for (k, v) in tal.iter().enumerate() {
                 side[base + k * g.w..base + (k + 1) * g.w]
                     .copy_from_slice(&v.to_le_bytes()[0..g.w]);
             }
@@ -468,10 +508,12 @@ pub fn write_block(rs: &Rows, g: Geom, off_rate: u32,
             let sc = off >> 2;
             let bpi = off & 3;
             side[sc] |= code << (bpi * 2);
-            let f_sc = (g.side_gbwt_sz + sc) >> 1;
-            let f_bpi = bpi + ((sc & 1) << 2);
-            side[f_sc] |= f << f_bpi;
-            side[f_sc + (g.side_gbwt_sz >> 2)] |= m << f_bpi;
+            if !g.linear {
+                let f_sc = (g.side_gbwt_sz + sc) >> 1;
+                let f_bpi = bpi + ((sc & 1) << 2);
+                side[f_sc] |= f << f_bpi;
+                side[f_sc + (g.side_gbwt_sz >> 2)] |= m << f_bpi;
+            }
             row_i += 1;
         }
         w1.write_all(&side)?;
@@ -538,10 +580,10 @@ impl Nav {
         c.filled[i] = true;
         Ok(i)
     }
-    fn tally(buf: &[u8], side_sz: usize, w: usize, k: usize) -> u64 {
+    fn tally(buf: &[u8], g: &Geom, k: usize) -> u64 {
         let mut b = [0u8; 8];
-        let at = side_sz - 6 * w + k * w;
-        b[0..w].copy_from_slice(&buf[at..at + w]);
+        let at = g.tally_base() + k * g.w;
+        b[0..g.w].copy_from_slice(&buf[at..at + g.w]);
         u64::from_le_bytes(b)
     }
     fn bwt_at(buf: &[u8], off: usize) -> u8 { (buf[off >> 2] >> ((off & 3) * 2)) & 3 }
@@ -562,7 +604,7 @@ impl Nav {
         let start = s as u64 * self.g.rows_per_side as u64;
         let i = self.side(s, sd)?;
         let buf = &sd.slots[i].1;
-        let mut n = Self::tally(buf, self.g.side_sz, self.g.w, 2 + c);
+        let mut n = Self::tally(buf, &self.g, self.g.occ_slot(c));
         for off in 0..(row - start) as usize {
             if Self::bwt_at(buf, off) as usize == c { n += 1; }
         }
@@ -580,7 +622,7 @@ impl Nav {
         let start = s as u64 * self.g.rows_per_side as u64;
         let i = self.side(s, sd)?;
         let buf = &sd.slots[i].1;
-        let mut n = Self::tally(buf, self.g.side_sz, self.g.w, 1);
+        let mut n = Self::tally(buf, &self.g, 1);
         for off in 0..(x - start) as usize {
             n += Self::mbit_at(buf, &self.g, off) as u64;
         }
@@ -623,6 +665,9 @@ impl Nav {
         let nt = self.fchr[c] + self.occ(top, c, sd)?;
         let nb = self.fchr[c] + self.occ(bot, c, sd)?;
         if nt >= nb { return Ok(None); }
+        // A linear FM has no node structure: the LF result IS the new range,
+        // with no rank_M/select_F hop (and no F/M bitvectors to read).
+        if self.g.linear { return Ok(Some((nt, nb))); }
         let node_top = self.rank_m(nt + 1, sd)? - 1;
         let node_bot = self.rank_m(nb, sd)?;
         let t = self.select_f(node_top + 1, sd)?;
@@ -763,6 +808,24 @@ pub fn build_ftab(nav: &Nav, ftab_chars: u32, w: usize, verbose: bool)
             eftab_o.push(lo); eftab_o.push(hi);
         }
         ftab_o[i + 1] = tftab[i].1;
+    }
+    // Two linear-only rules, identical to the ones local5.rs already applies to
+    // the LOCAL indexes (which is why `.5`/`.6` matched even before the global
+    // linear encoding existed):
+    //   1. the linear writer absorbs the rows no `ftabChars`-long prefix can
+    //      reach -- suffixes shorter than ftabChars, and the $ row -- into the
+    //      final bucket, so its last entry is an eftab pair ending at gbwtLen
+    //      rather than a bare boundary. The graph writer leaves it bare.
+    //   2. it reserves `ftabChars * 2` eftab entries and zero-fills the rest,
+    //      so eftabLen is a constant 2*ftabChars, not the number used.
+    if nav.g.linear {
+        let index_max = if w == 4 { u32::MAX as u64 } else { u64::MAX };
+        if ftab_o[ftab_len - 1] != nav.gbwt_len {
+            let (lo, hi) = (ftab_o[ftab_len - 1], nav.gbwt_len);
+            ftab_o[ftab_len - 1] = (eftab_o.len() as u64 / 2) ^ index_max;
+            eftab_o.push(lo); eftab_o.push(hi);
+        }
+        eftab_o.resize(2 * ftab_chars as usize, 0);
     }
     Ok((ftab_o, eftab_o))
 }

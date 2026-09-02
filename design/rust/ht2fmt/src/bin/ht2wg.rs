@@ -227,7 +227,10 @@ fn main() -> std::io::Result<()> {
         rs
     };
     timer.mark("generateEdges");
-    let g = wgemit::geom(rs.gbwt_len, line_rate, w);
+    // gfm.h:149 -- no variants means one node per base plus the terminator,
+    // which HISAT2 encodes as a plain FM index rather than a graph.
+    let linear = rs.gbwt_len == len as u64 + 1;
+    let g = wgemit::geom(rs.gbwt_len, line_rate, w, linear);
 
     // ---- .1.ht2 through the gbwt block, and .2.ht2 ----------------------
     let mut head: Vec<u8> = Vec::new();
