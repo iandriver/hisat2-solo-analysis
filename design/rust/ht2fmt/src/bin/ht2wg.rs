@@ -144,18 +144,11 @@ fn main() -> std::io::Result<()> {
     // input, so it is in the resume fingerprint.
     let ss = env::var("HT2_SS").unwrap_or_default();
     let exon = env::var("HT2_EXON").unwrap_or_default();
-    // `local5::emit` does not know about splice sites yet, so an annotated run
-    // would write local indexes built as though there were none while `.7` said
-    // otherwise -- an index whose ALT table and whose local graphs disagree,
-    // which nothing downstream would flag. HT2_NO_LOCAL skips `.5`/`.6`
-    // entirely, which is what makes the rest checkable in the meantime.
+    // HT2_NO_LOCAL skips `.5`/`.6`. It is not needed for an annotated build any
+    // more, but it stays: the local indexes are the slowest stage by far, and
+    // being able to check everything else without them is what made the
+    // annotation work testable one step at a time.
     let no_local = env::var("HT2_NO_LOCAL").is_ok();
-    let annotated = !ss.is_empty() || !exon.is_empty();
-    if annotated && !no_local && env::var("HT2_ALTS_ONLY").is_err() {
-        eprintln!("HT2_SS/HT2_EXON are not wired into the local indexes yet.");
-        eprintln!("Run with HT2_NO_LOCAL=1 (skips .5/.6) or HT2_ALTS_ONLY=1, or unset them.");
-        process::exit(2);
-    }
     fs::create_dir_all(&wd)?;
     let mut timer = Timer::new();
 

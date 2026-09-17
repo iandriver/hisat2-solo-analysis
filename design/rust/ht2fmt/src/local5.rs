@@ -30,6 +30,14 @@ fn select_alts(orig: &[graph::Alt], k: usize) -> (Vec<graph::Alt>, Vec<graph::Ha
         alts.push(graph::Alt { pos: o.pos, len: o.len, seq: o.seq, typ: o.typ });
     }
     for (a, alt) in alts.iter().enumerate() {
+        // `if(!alt.snp()) continue` (hgfm.h:1843). A thinned window keeps its
+        // splice sites -- they are picked by the same `i * n / k` spacing as
+        // everything else -- but nothing synthesises a haplotype for one, and
+        // the `pos + len - 1` a deletion uses would be nonsense for a site
+        // whose `len` is an absolute coordinate.
+        if alt.typ != graph::ALT_SGL && alt.typ != graph::ALT_DEL && alt.typ != graph::ALT_INS {
+            continue;
+        }
         let right = if alt.typ == graph::ALT_DEL { alt.pos + alt.len - 1 } else { alt.pos };
         haps.push(graph::Hap { left: alt.pos, right, alts: vec![a as u32] });
     }
@@ -231,6 +239,28 @@ pub fn build_window(p: &graph::Parsed, (tidx, cstart, a0, wlen, _full): (u32, u3
             // spacing, which shifts the entire thinned subset of any window
             // dense enough to explode.
             if x.pos < a0 { continue; }
+            // The annotation types do not take part in the break: the C++ tests
+            // `alt.snp()` first, so a splice site that does not fit `continue`s
+            // where a SNP would have stopped the scan, and an exon falls
+            // through to a bare assert (hgfm.h:2362 and :2371).
+            match x.typ {
+                graph::ALT_EXON => continue,
+                graph::ALT_SS => {
+                    if x.seq & (1 << 8) != 0 { continue; }
+                    // `curr_sztot + local_sztot <= alt.right + 1`: the base
+                    // after the intron has to be in this window too, or the
+                    // edge would leave it. 3.5% of GENCODE v32 introns are
+                    // longer than the 57,344 bp window and reach no local index
+                    // at all -- they live only in the global graph.
+                    if b0 <= x.len + 1 { continue; }
+                    // No `alt_map` entry: nothing can reference a splice site,
+                    // and the C++ sets none either. It still enters `orig`, so
+                    // it counts towards `n` in selectAlts' spacing.
+                    orig.push(graph::Alt { pos: x.pos - a0, len: x.len - a0, seq: x.seq, typ: x.typ });
+                    continue;
+                }
+                _ => {}
+            }
             let stop = match x.typ {
                 graph::ALT_DEL => b0 < x.pos + x.len,
                 graph::ALT_INS => b0 < x.pos,
