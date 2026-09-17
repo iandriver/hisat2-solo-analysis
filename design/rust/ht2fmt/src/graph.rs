@@ -630,19 +630,26 @@ pub const RELAX: u32 = 128;
 
 pub fn fragment_bounds(len: u32, alts: &[Alt], chunk: u32) -> Vec<(u32, u32)> {
     // positions that must not be cut through, as sorted inclusive ranges
-    let mut bad: Vec<(u32, u32)> = alts.iter().map(|a| {
+    let mut bad: Vec<(u32, u32)> = alts.iter().filter_map(|a| {
         let lo = a.pos.saturating_sub(RELAX + 1);
         let hi = match a.typ {
             ALT_DEL  => a.pos + a.len + RELAX,
-            // A splice site's span is the whole intron, which is what makes it
-            // expensive here; exons contribute no range at all. Neither is
-            // implemented yet, and a silent `_` arm would give them a SNP's
-            // one-base span and quietly build the wrong graph.
-            ALT_SS   => unimplemented!("splice sites in fragment_bounds"),
-            ALT_EXON => unimplemented!("exons in fragment_bounds"),
+            // `len` is `right`, so this is the whole intron. It has to be: the
+            // splice-site edge runs from `left` to `right + 2`, and
+            // `build_fragmented` can only hand an edge to the fragment directly
+            // after the one that made it. This is where the annotation costs
+            // something -- on GENCODE v32 it takes the longest uncuttable block
+            // from 41 kb to 2.47 Mb.
+            ALT_SS   => a.len + 1 + RELAX,
+            // Exons are not in the graph at all, so they block nothing
+            // (`gbwt_graph.h:404` skips them in exactly this loop).
+            ALT_EXON => return None,
+            // SGL is `pos + 1`; INS is `pos` in the C++ and one base wider
+            // here. Deliberate: a wider range only ever pushes a cut later, and
+            // where the cuts land is free (see `check_bounds`).
             _        => a.pos + 1 + RELAX,
         };
-        (lo, hi.min(len))
+        Some((lo, hi.min(len)))
     }).collect();
     bad.sort_unstable();
     let mut merged: Vec<(u32, u32)> = Vec::with_capacity(bad.len());
@@ -676,6 +683,35 @@ pub fn fragment_bounds(len: u32, alts: &[Alt], chunk: u32) -> Vec<(u32, u32)> {
     out
 }
 
+
+/// Every cut must be clear of every variant that contributes graph structure.
+/// That is the only thing the stitched graph depends on: where the cuts land
+/// beyond it is free, which is why ht2wg's 256 kb chunking reproduces
+/// hisat2-build's 1 Mb chunking byte for byte. Cheap enough to run over a whole
+/// genome, so it is the check for the annotation case rather than a diff
+/// against boundaries the C++ happens to pick.
+pub fn check_bounds(bounds: &[(u32, u32)], alts: &[Alt]) -> Result<(), String> {
+    let cuts: Vec<u32> = bounds.iter().skip(1).map(|&(a, _)| a).collect();
+    if cuts.windows(2).any(|w| w[0] >= w[1]) {
+        return Err("fragment bounds are not strictly increasing".into());
+    }
+    for a in alts {
+        let (lo, hi) = match a.typ {
+            ALT_EXON => continue,
+            ALT_DEL  => (a.pos.saturating_sub(RELAX + 1), a.pos + a.len + RELAX),
+            ALT_SS   => (a.pos.saturating_sub(RELAX + 1), a.len + 1 + RELAX),
+            _        => (a.pos.saturating_sub(RELAX + 1), a.pos + 1 + RELAX),
+        };
+        let i = cuts.partition_point(|&c| c < lo);
+        if let Some(&c) = cuts.get(i) {
+            if c <= hi {
+                return Err(format!(
+                    "cut at {c} falls inside a type-{} variant spanning [{lo}, {hi}]", a.typ));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Step 3.5 — build the graph one fragment at a time.
 ///

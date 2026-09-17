@@ -23,14 +23,36 @@ fn main() {
     }
     let chunk: u32 = a.get(4).and_then(|x| x.parse().ok()).unwrap_or(1 << 20);
 
-    let p = graph::parse(&a[1], &a[2], &a[3]);
+    let ss = env::var("HT2_SS").unwrap_or_default();
+    let exon = env::var("HT2_EXON").unwrap_or_default();
+    let p = graph::parse_with(&a[1], &a[2], &a[3], &ss, &exon);
     let len = p.text.len() as u32;
     let bounds = graph::fragment_bounds(len, &p.alts, chunk);
-    let widths: Vec<u32> = bounds.iter().map(|&(x, y)| y - x).collect();
+    let mut widths: Vec<u32> = bounds.iter().map(|&(x, y)| y - x).collect();
     println!("{len} bp, {} alts -> {} fragments (chunk {chunk}); widths min {} max {}",
              p.alts.len(), bounds.len(),
              widths.iter().min().copied().unwrap_or(0),
              widths.iter().max().copied().unwrap_or(0));
+    match graph::check_bounds(&bounds, &p.alts) {
+        Ok(()) => println!("  every cut is clear of every structural variant"),
+        Err(e) => { println!("  BAD BOUNDS: {e}"); std::process::exit(1); }
+    }
+    // The distribution, not just the extremes: what this costs is the largest
+    // fragment the determinisation has to hold, and how many of them there are.
+    widths.sort_unstable();
+    let q = |f: f64| widths[((widths.len() - 1) as f64 * f) as usize];
+    println!("  fragment width: median {} p90 {} p99 {} max {}; over 1 Mb: {}",
+             q(0.5), q(0.9), q(0.99), widths[widths.len() - 1],
+             widths.iter().filter(|&&w| w > (1 << 20)).count());
+
+    // HT2_BOUNDS_ONLY=1 stops here: the boundaries are checkable on their own,
+    // and the fragmented build below needs the splice-site edges that
+    // `build_range_with` does not emit yet.
+    if env::var("HT2_BOUNDS_ONLY").is_ok() { return; }
+    if !ss.is_empty() || !exon.is_empty() {
+        eprintln!("HT2_SS/HT2_EXON need HT2_BOUNDS_ONLY=1 until build_range_with handles them");
+        std::process::exit(2);
+    }
     drop(p);
 
     // HT2_FRAG_ONLY=1 builds only the fragmented path, so /usr/bin/time -l
