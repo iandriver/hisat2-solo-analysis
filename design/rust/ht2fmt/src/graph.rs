@@ -10,6 +10,11 @@ use std::fs;
 pub const ALT_SGL: u8 = 0;
 pub const ALT_DEL: u8 = 1;
 pub const ALT_INS: u8 = 2;
+/// Annotation ALTs. For these two, `Alt::pos` is `left` and `Alt::len` is
+/// `right` -- an absolute coordinate, not a length -- because HISAT2 unions
+/// the fields (`alt.h:56`). `Alt::seq` is the packed `excluded << 8 | fw`.
+pub const ALT_SS:   u8 = 3;
+pub const ALT_EXON: u8 = 4;
 
 pub struct Alt { pub pos: u32, pub len: u32, pub seq: u64, pub typ: u8 }
 pub struct Hap { pub left: u32, pub right: u32, pub alts: Vec<u32> }
@@ -74,6 +79,11 @@ fn for_each_line<F: FnMut(&str)>(path: &str, what: &str, mut f: F) {
 }
 
 pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
+    parse_with(fa, snp, hap, "", "")
+}
+
+/// As `parse`, plus the `--ss` and `--exon` files. Either may be `""`.
+pub fn parse_with(fa: &str, snp: &str, hap: &str, ss: &str, exon: &str) -> Parsed {
     let mut text: Vec<u8> = Vec::new();
     let mut runs: HashMap<String, Vec<Run>> = HashMap::new();
     let mut cur = String::new();
@@ -147,7 +157,6 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
         alt_names.push(b'\n');
         alts.push(Alt { pos, len: len_, seq, typ });
     });
-    alt_name_at.push(alt_names.len() as u32);
     let mut haps: Vec<Hap> = Vec::new();
     let mut dropped_haps = 0usize;
     for_each_line(hap, "haplotype", |line| {
@@ -171,6 +180,86 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
             _ => dropped_haps += 1,
         }
     });
+
+    // ---- --ss and --exon (gfm.h:1661 and :1787) --------------------------
+    // Both files carry EXONIC coordinates, which gfm.h converts to intronic by
+    // moving each end one base inward, and both are rejected unless the two
+    // ends land in the same unambiguous run -- the `inside_Ns` walk, which here
+    // is the same "joined width still equals chromosome width" test the
+    // haplotypes use. `joined` standing in for `checkPosToSzs` is exact: both
+    // ask whether a position is inside an unambiguous run of that sequence.
+    let mut ss_seq: HashMap<u64, u32> = HashMap::new();
+    if !ss.is_empty() {
+        for_each_line(ss, "ss", |line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() < 4 || f[0].starts_with('#') { return; }
+            let (fl, fr) = (f[1].parse::<u32>().expect("ss left"),
+                            f[2].parse::<u32>().expect("ss right"));
+            if fl == 0 || fr == 0 { return; }
+            let (cl, cr) = (fl + 1, fr - 1);
+            if cl >= cr { return; }
+            // gfm.h checks the file's own ends are in a run before converting.
+            if joined(f[0], fl).is_none() || joined(f[0], fr).is_none() { return; }
+            let (left, right) = match (joined(f[0], cl), joined(f[0], cr)) {
+                (Some(l), Some(r)) if r - l == cr - cl => (l, r),
+                _ => return,
+            };
+            // The repeat guard. gfm.h counts each junction's 16 bp + 16 bp
+            // flank, and its `continue` sits INSIDE this window check, so a
+            // junction repeating the one before it is dropped outright rather
+            // than merely left uncounted -- but only when the window is in
+            // range at all.
+            const SEQLEN: u32 = 16;
+            if left >= SEQLEN && (right + 1 + SEQLEN) as usize <= text.len() {
+                let mut key = 0u64;
+                for i in (left - SEQLEN)..left { key = key << 2 | text[i as usize] as u64; }
+                for i in (right + 1)..(right + 1 + SEQLEN) { key = key << 2 | text[i as usize] as u64; }
+                if let Some(prev) = alts.last() {
+                    if prev.pos == left && prev.len == right { return; }
+                }
+                *ss_seq.entry(key).or_insert(0) += 1;
+            }
+            alt_name_at.push(alt_names.len() as u32);
+            alt_names.extend_from_slice(b"ss\n");
+            alts.push(Alt { pos: left, len: right, seq: (f[3] == "+") as u64, typ: ALT_SS });
+        });
+        // Second pass: exclude every junction whose flank pair is not unique.
+        // Assigned only where the window is in range, so one that is not keeps
+        // the `false` it was pushed with.
+        const SEQLEN: u32 = 16;
+        for a in alts.iter_mut() {
+            if a.typ != ALT_SS { continue; }
+            let (left, right) = (a.pos, a.len);
+            if left >= SEQLEN && (right + 1 + SEQLEN) as usize <= text.len() {
+                let mut key = 0u64;
+                for i in (left - SEQLEN)..left { key = key << 2 | text[i as usize] as u64; }
+                for i in (right + 1)..(right + 1 + SEQLEN) { key = key << 2 | text[i as usize] as u64; }
+                if ss_seq.get(&key).copied().unwrap_or(0) > 1 { a.seq |= 1 << 8; }
+            }
+        }
+    }
+    if !exon.is_empty() {
+        for_each_line(exon, "exon", |line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() < 4 || f[0].starts_with('#') { return; }
+            let (fl, fr) = (f[1].parse::<u32>().expect("exon left"),
+                            f[2].parse::<u32>().expect("exon right"));
+            if fl == 0 || fr == 0 { return; }
+            let (cl, cr) = (fl + 1, fr - 1);
+            if cl >= cr { return; }
+            // No `checkPosToSzs` here: gfm.h:1787 runs the `inside_Ns` walk and
+            // nothing else, and exons never reach the graph.
+            let (left, right) = match (joined(f[0], cl), joined(f[0], cr)) {
+                (Some(l), Some(r)) if r - l == cr - cl => (l, r),
+                _ => return,
+            };
+            alt_name_at.push(alt_names.len() as u32);
+            alt_names.extend_from_slice(b"exon\n");
+            alts.push(Alt { pos: left, len: right, seq: (f[3] == "+") as u64, typ: ALT_EXON });
+        });
+    }
+    alt_name_at.push(alt_names.len() as u32);
+
     if !cur.is_empty() { plen.push((cur.clone(), chrom_off)); }
     let mut seqs: Vec<(String, u32, Vec<(u32, u32, u32)>)> = Vec::new();
     for (name, full) in plen.iter() {
@@ -185,7 +274,15 @@ pub fn parse(fa: &str, snp: &str, hap: &str) -> Parsed {
     // them -- but a variant file that is not position-sorted would otherwise
     // build a different index here than `hisat2-build` does.
     {
-        let rank = |t: u8| -> u8 { match t { ALT_INS => 1, ALT_SGL => 2, _ => 4 } };
+        // HISAT2 orders by `type <` over its own enum -- SGL 1, INS 2, DEL 3,
+        // SPLICESITE 5, EXON 6 -- with insertions forced ahead of everything at
+        // the same position (`alt.h:91`). Only the order matters.
+        let rank = |t: u8| -> u8 {
+            match t {
+                ALT_INS => 1, ALT_SGL => 2, ALT_DEL => 4, ALT_SS => 5, ALT_EXON => 6,
+                other => panic!("unknown ALT type code {other}"),
+            }
+        };
         let mut ord: Vec<u32> = (0..alts.len() as u32).collect();
         // Stable, which is what pairing each ALT with its index achieves in the
         // C++: equal variants keep their file order.
@@ -536,8 +633,14 @@ pub fn fragment_bounds(len: u32, alts: &[Alt], chunk: u32) -> Vec<(u32, u32)> {
     let mut bad: Vec<(u32, u32)> = alts.iter().map(|a| {
         let lo = a.pos.saturating_sub(RELAX + 1);
         let hi = match a.typ {
-            ALT_DEL => a.pos + a.len + RELAX,
-            _       => a.pos + 1 + RELAX,
+            ALT_DEL  => a.pos + a.len + RELAX,
+            // A splice site's span is the whole intron, which is what makes it
+            // expensive here; exons contribute no range at all. Neither is
+            // implemented yet, and a silent `_` arm would give them a SNP's
+            // one-base span and quietly build the wrong graph.
+            ALT_SS   => unimplemented!("splice sites in fragment_bounds"),
+            ALT_EXON => unimplemented!("exons in fragment_bounds"),
+            _        => a.pos + 1 + RELAX,
         };
         (lo, hi.min(len))
     }).collect();

@@ -59,6 +59,44 @@ const VERSION: u32 = (2 << 24) | (2 << 16) | (3 << 8);   // 2.2.3
 /// `writeI32` — always four bytes, whatever `index_t` is.
 fn put(v: &mut Vec<u8>, x: u32) { v.extend_from_slice(&x.to_le_bytes()); }
 
+/// `.7.ht2` / `.8.ht2`: the variant database (`gfm.h:1912`). Not part of the
+/// graph -- a straight serialisation of the alt and haplotype lists, and where
+/// `Zs:Z` gets its rsIDs. The repeat block that follows is empty unless
+/// `--repeat-ref` was given, which is why the fixtures' `.7` ends at the
+/// haplotypes.
+fn alt_db(p: &graph::Parsed, w: usize) -> (Vec<u8>, Vec<u8>) {
+    let put_idx = |v: &mut Vec<u8>, x: u64| v.extend_from_slice(&x.to_le_bytes()[0..w]);
+    let mut o7: Vec<u8> = Vec::new();
+    put(&mut o7, 1);
+    put_idx(&mut o7, p.alts.len() as u64);
+    for x in &p.alts {
+        put_idx(&mut o7, x.pos as u64);
+        // our own type codes are not HISAT2's ALT_TYPE enum
+        put(&mut o7, match x.typ {
+            graph::ALT_SGL  => 1,
+            graph::ALT_INS  => 2,
+            graph::ALT_DEL  => 3,
+            graph::ALT_SS   => 5,
+            graph::ALT_EXON => 6,
+            other => panic!("unknown ALT type code {other}"),
+        });
+        put_idx(&mut o7, x.len as u64);
+        o7.extend_from_slice(&x.seq.to_le_bytes());
+    }
+    put_idx(&mut o7, p.haps.len() as u64);
+    for h in &p.haps {
+        put_idx(&mut o7, h.left as u64);
+        put_idx(&mut o7, h.right as u64);
+        put_idx(&mut o7, h.alts.len() as u64);
+        for &i in &h.alts { put_idx(&mut o7, i as u64); }
+    }
+    let mut o8: Vec<u8> = Vec::new();
+    put(&mut o8, 1);
+    put_idx(&mut o8, p.alts.len() as u64);
+    o8.extend_from_slice(&p.alt_names);
+    (o7, o8)
+}
+
 fn tail_of(p: &str) -> &str { p.rsplit('/').next().unwrap_or(p) }
 
 fn compare(ours: &str, theirs: &str) -> bool {
@@ -101,6 +139,23 @@ fn main() -> std::io::Result<()> {
     let budget: usize = a.get(6).and_then(|x| x.parse().ok()).unwrap_or(1 << 20);
     let verify = a.get(7).cloned();
     let chunk: u32 = env::var("HT2_CHUNK").ok().and_then(|x| x.parse().ok()).unwrap_or(1 << 18);
+    // The annotation goes in by environment rather than argv so the five
+    // positionals, the resume fingerprint and every existing run script keep
+    // working. They belong in the fingerprint all the same: an index built with
+    // an annotation is not the index built without one.
+    let ss = env::var("HT2_SS").unwrap_or_default();
+    let exon = env::var("HT2_EXON").unwrap_or_default();
+    // Only the variant database reads them so far. `doubling::run` re-parses
+    // with the three-argument `parse`, so a full run would build the graph and
+    // the local indexes WITHOUT the annotation and then write a `.7` that says
+    // the splice sites are there -- an index whose ALT table and whose graph
+    // disagree, which nothing downstream would flag. Refuse until the graph
+    // side lands.
+    if (!ss.is_empty() || !exon.is_empty()) && env::var("HT2_ALTS_ONLY").is_err() {
+        eprintln!("HT2_SS/HT2_EXON are only wired into the variant database so far.");
+        eprintln!("Run with HT2_ALTS_ONLY=1 to build and check .7/.8, or unset them.");
+        process::exit(2);
+    }
     fs::create_dir_all(&wd)?;
     let mut timer = Timer::new();
 
@@ -198,6 +253,33 @@ fn main() -> std::io::Result<()> {
             }
             if !ok { process::exit(1); }
             println!("\nREFERENCE MATCHES ({v}.3/.4 byte-identical)");
+        }
+        return Ok(());
+    }
+
+    // HT2_ALTS_ONLY stops after the variant database. `.7` and `.8` are a pure
+    // function of the FASTA and the variant files -- no graph, no doubling --
+    // so this checks the parse, the ordering and the annotation ALTs against a
+    // known-good index in seconds rather than at the end of a full build.
+    if env::var("HT2_ALTS_ONLY").is_ok() {
+        let p = graph::parse_with(fa, snp, hap, &ss, &exon);
+        let n_ss = p.alts.iter().filter(|a| a.typ == graph::ALT_SS).count();
+        let n_ex = p.alts.iter().filter(|a| a.typ == graph::ALT_EXON).count();
+        let n_x  = p.alts.iter().filter(|a| a.typ == graph::ALT_SS && a.seq & (1 << 8) != 0).count();
+        let (o7, o8) = alt_db(&p, w);
+        fs::write(format!("{out}.7.{ext}"), &o7)?;
+        fs::write(format!("{out}.8.{ext}"), &o8)?;
+        println!("\nHT2_ALTS_ONLY: {} alts ({} splice sites, {} of them excluded; {} exons), \
+{} haplotypes", p.alts.len(), n_ss, n_x, n_ex, p.haps.len());
+        println!("wrote {out}.7.{ext} ({} bytes) and {out}.8.{ext} ({} bytes)", o7.len(), o8.len());
+        if let Some(v) = verify {
+            println!("\nagainst {v}:");
+            let mut ok = true;
+            for n in [7u32, 8] {
+                ok &= compare(&format!("{out}.{n}.{ext}"), &format!("{v}.{n}.{ext}"));
+            }
+            if !ok { process::exit(1); }
+            println!("\nVARIANT DATABASE MATCHES ({v}.7/.8 byte-identical)");
         }
         return Ok(());
     }
@@ -312,40 +394,14 @@ fn main() -> std::io::Result<()> {
     // doubling: holding the joined text plus the variant list through a
     // whole-genome build costs more than re-reading them costs.
     {
-        let p = graph::parse(fa, snp, hap);
+        let p = graph::parse_with(fa, snp, hap, &ss, &exon);
         let mut w5 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.5.{ext}"))?);
         let mut w6 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.6.{ext}"))?);
         local5::emit(&p, &mut w5, &mut w6, w, true)?;
         w5.flush()?; w6.flush()?;
 
-        // ---- .7.ht2 / .8.ht2: the variant database ----------------------
-        // Not part of the graph at all -- a straight serialisation of the alt
-        // and haplotype lists (gfm.h:1912), which is where `Zs:Z` gets its rsIDs
-        // from. The repeat block that follows is empty unless `--repeat-ref` was
-        // given, which is why the fixtures' `.7` ends exactly at the haplotypes.
-        let mut o7: Vec<u8> = Vec::new();
-        put(&mut o7, 1);
-        put_idx(&mut o7, p.alts.len() as u64);
-        for x in &p.alts {
-            put_idx(&mut o7, x.pos as u64);
-            // our own type codes are not HISAT2's ALT_TYPE enum
-            put(&mut o7, match x.typ { graph::ALT_SGL => 1, graph::ALT_INS => 2, _ => 3 });
-            put_idx(&mut o7, x.len as u64);
-            o7.extend_from_slice(&x.seq.to_le_bytes());
-        }
-        put_idx(&mut o7, p.haps.len() as u64);
-        for h in &p.haps {
-            put_idx(&mut o7, h.left as u64);
-            put_idx(&mut o7, h.right as u64);
-            put_idx(&mut o7, h.alts.len() as u64);
-            for &i in &h.alts { put_idx(&mut o7, i as u64); }
-        }
+        let (o7, o8) = alt_db(&p, w);
         fs::write(format!("{out}.7.{ext}"), &o7)?;
-
-        let mut o8: Vec<u8> = Vec::new();
-        put(&mut o8, 1);
-        put_idx(&mut o8, p.alts.len() as u64);
-        o8.extend_from_slice(&p.alt_names);
         fs::write(format!("{out}.8.{ext}"), &o8)?;
         println!("wrote {out}.7.{ext} ({} bytes) and .8.{ext} ({} bytes) -- {} variants, {} haplotypes",
                  o7.len(), o8.len(), p.alts.len(), p.haps.len());
