@@ -140,20 +140,20 @@ fn main() -> std::io::Result<()> {
     let verify = a.get(7).cloned();
     let chunk: u32 = env::var("HT2_CHUNK").ok().and_then(|x| x.parse().ok()).unwrap_or(1 << 18);
     // The annotation goes in by environment rather than argv so the five
-    // positionals, the resume fingerprint and every existing run script keep
-    // working. They belong in the fingerprint all the same: an index built with
-    // an annotation is not the index built without one.
+    // positionals and every existing run script keep working. It is still an
+    // input, so it is in the resume fingerprint.
     let ss = env::var("HT2_SS").unwrap_or_default();
     let exon = env::var("HT2_EXON").unwrap_or_default();
-    // Only the variant database reads them so far. `doubling::run` re-parses
-    // with the three-argument `parse`, so a full run would build the graph and
-    // the local indexes WITHOUT the annotation and then write a `.7` that says
-    // the splice sites are there -- an index whose ALT table and whose graph
-    // disagree, which nothing downstream would flag. Refuse until the graph
-    // side lands.
-    if (!ss.is_empty() || !exon.is_empty()) && env::var("HT2_ALTS_ONLY").is_err() {
-        eprintln!("HT2_SS/HT2_EXON are only wired into the variant database so far.");
-        eprintln!("Run with HT2_ALTS_ONLY=1 to build and check .7/.8, or unset them.");
+    // `local5::emit` does not know about splice sites yet, so an annotated run
+    // would write local indexes built as though there were none while `.7` said
+    // otherwise -- an index whose ALT table and whose local graphs disagree,
+    // which nothing downstream would flag. HT2_NO_LOCAL skips `.5`/`.6`
+    // entirely, which is what makes the rest checkable in the meantime.
+    let no_local = env::var("HT2_NO_LOCAL").is_ok();
+    let annotated = !ss.is_empty() || !exon.is_empty();
+    if annotated && !no_local && env::var("HT2_ALTS_ONLY").is_err() {
+        eprintln!("HT2_SS/HT2_EXON are not wired into the local indexes yet.");
+        eprintln!("Run with HT2_NO_LOCAL=1 (skips .5/.6) or HT2_ALTS_ONLY=1, or unset them.");
         process::exit(2);
     }
     fs::create_dir_all(&wd)?;
@@ -170,7 +170,7 @@ fn main() -> std::io::Result<()> {
     // replaces it. `HT2_NO_RESUME=1` buys that back and gives up the ability to
     // restart.
     let resume = env::var("HT2_NO_RESUME").is_err();
-    let fp = ckpt::fingerprint(fa, snp, hap, large, chunk);
+    let fp = ckpt::fingerprint(fa, snp, hap, &ss, &exon, large, chunk);
     let mut ck = if env::var("HT2_FRESH").is_ok() || !resume { None }
                  else { ckpt::load(&wd, &fp) }
         .unwrap_or_default();
@@ -285,7 +285,7 @@ fn main() -> std::io::Result<()> {
     }
 
     // ---- the path graph, fragmented and external ------------------------
-    let d = doubling::run(fa, snp, hap, &wd, budget, chunk, true, &mut ck, resume)?;
+    let d = doubling::run_with(fa, snp, hap, &ss, &exon, &wd, budget, chunk, true, &mut ck, resume)?;
     timer.mark("graph + doubling");
     // generate_edges consumes `cur` -- it reads it once, to sort by `from` --
     // so its own checkpoint has to be the thing that lets a restart skip it
@@ -395,10 +395,12 @@ fn main() -> std::io::Result<()> {
     // whole-genome build costs more than re-reading them costs.
     {
         let p = graph::parse_with(fa, snp, hap, &ss, &exon);
-        let mut w5 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.5.{ext}"))?);
-        let mut w6 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.6.{ext}"))?);
-        local5::emit(&p, &mut w5, &mut w6, w, true)?;
-        w5.flush()?; w6.flush()?;
+        if !no_local {
+            let mut w5 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.5.{ext}"))?);
+            let mut w6 = BufWriter::with_capacity(1 << 20, File::create(format!("{out}.6.{ext}"))?);
+            local5::emit(&p, &mut w5, &mut w6, w, true)?;
+            w5.flush()?; w6.flush()?;
+        }
 
         let (o7, o8) = alt_db(&p, w);
         fs::write(format!("{out}.7.{ext}"), &o7)?;
@@ -407,9 +409,13 @@ fn main() -> std::io::Result<()> {
                  o7.len(), o8.len(), p.alts.len(), p.haps.len());
     }
     timer.mark("local indexes .5/.6");
-    println!("wrote {out}.5.{ext} ({} bytes) and .6.{ext} ({} bytes)",
-             fs::metadata(format!("{out}.5.{ext}"))?.len(),
-             fs::metadata(format!("{out}.6.{ext}"))?.len());
+    if no_local {
+        println!("HT2_NO_LOCAL: skipped {out}.5.{ext} and .6.{ext}");
+    } else {
+        println!("wrote {out}.5.{ext} ({} bytes) and .6.{ext} ({} bytes)",
+                 fs::metadata(format!("{out}.5.{ext}"))?.len(),
+                 fs::metadata(format!("{out}.6.{ext}"))?.len());
+    }
 
     timer.report();
 
@@ -425,6 +431,7 @@ fn main() -> std::io::Result<()> {
         println!("\nagainst {v}:");
         let mut ok = doubling::check_curve(&d.curve, &format!("{v}.log"));
         for n in 1..=8 {
+            if no_local && (n == 5 || n == 6) { continue; }
             ok &= compare(&format!("{out}.{n}.{ext}"), &format!("{v}.{n}.{ext}"));
         }
         if !ok { process::exit(1); }

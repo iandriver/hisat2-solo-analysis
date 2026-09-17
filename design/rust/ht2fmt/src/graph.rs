@@ -449,11 +449,35 @@ pub fn build_range_with(text: &[u8], alts: &[Alt], in_haps: &[Hap],
         }
     }
 
+    // Splice sites, after the haplotypes -- the order the C++ appends them in
+    // (`gbwt_graph.h:781` globally, `:1107` per fragment), and edge order is
+    // what reverse_determinize walks.
+    //
+    // One edge, no nodes: from the base BEFORE the intron to the base AFTER it,
+    // which in this range's numbering (`local(j) = j - a + 1`) is `left - a` to
+    // `right - a + 2`. `len` is `right`. An excluded site contributes nothing.
+    //
+    // No bound check on the far end is needed and the C++ has none either:
+    // `fragment_bounds` will not cut inside `[left - RELAX - 1, right + 1 +
+    // RELAX]`, so a fragment holding `left` holds `right + 1` as well.
+    for alt in alts {
+        if alt.typ != ALT_SS { continue; }
+        if alt.pos < a { continue; }
+        if alt.pos >= b { break; }
+        if alt.seq & (1 << 8) != 0 { continue; }
+        debug_assert!(alt.len + 1 < b, "splice site {}..{} escapes fragment [{a},{b})", alt.pos, alt.len);
+        edges.push((alt.pos - a, alt.len - a + 2));
+    }
+
     (nodes, edges, base_edges)
 }
 
 pub fn build(fa: &str, snp: &str, hap: &str) -> Built {
-    let p = parse(fa, snp, hap);
+    build_with(fa, snp, hap, "", "")
+}
+
+pub fn build_with(fa: &str, snp: &str, hap: &str, ss: &str, exon: &str) -> Built {
+    let p = parse_with(fa, snp, hap, ss, exon);
     let len = p.text.len() as u32;
     let (nodes, edges, base_edges) = build_range(&p, 0, len, true, true);
     let (pre_nodes, pre_edges) = (nodes.len(), edges.len());
@@ -725,7 +749,11 @@ pub fn check_bounds(bounds: &[(u32, u32)], alts: &[Alt]) -> Result<(), String> {
 /// which determinisation preserves and which — in a variant-free stretch — only
 /// the backbone node carries.
 pub fn build_fragmented(fa: &str, snp: &str, hap: &str, chunk: u32) -> Built {
-    let p = parse(fa, snp, hap);
+    build_fragmented_with(fa, snp, hap, "", "", chunk)
+}
+
+pub fn build_fragmented_with(fa: &str, snp: &str, hap: &str, ss: &str, exon: &str, chunk: u32) -> Built {
+    let p = parse_with(fa, snp, hap, ss, exon);
     let len = p.text.len() as u32;
     let bounds = fragment_bounds(len, &p.alts, chunk);
 
@@ -826,8 +854,15 @@ pub struct GraphOnDisk { pub n_nodes: u64, pub n_edges: u64, pub last_node: u32,
 pub fn build_fragmented_to_disk(fa: &str, snp: &str, hap: &str, chunk: u32, dir: &std::path::Path)
     -> std::io::Result<GraphOnDisk>
 {
+    build_fragmented_to_disk_with(fa, snp, hap, "", "", chunk, dir)
+}
+
+pub fn build_fragmented_to_disk_with(fa: &str, snp: &str, hap: &str, ss: &str, exon: &str,
+                                     chunk: u32, dir: &std::path::Path)
+    -> std::io::Result<GraphOnDisk>
+{
     use std::io::Write;
-    let p = parse(fa, snp, hap);
+    let p = parse_with(fa, snp, hap, ss, exon);
     let len = p.text.len() as u32;
     let bounds = fragment_bounds(len, &p.alts, chunk);
 

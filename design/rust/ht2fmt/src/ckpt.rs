@@ -44,9 +44,13 @@ pub fn path(wd: &Path) -> PathBuf { wd.join("checkpoint.txt") }
 /// Everything that changes the output. Deliberately NOT the thread count or the
 /// sort budget: neither affects a single byte, so a run interrupted on eighteen
 /// threads can be finished on four.
-pub fn fingerprint(fa: &str, snp: &str, hap: &str, large: bool, chunk: u32) -> String {
+pub fn fingerprint(fa: &str, snp: &str, hap: &str, ss: &str, exon: &str,
+                   large: bool, chunk: u32) -> String {
     let mut s = String::new();
-    for f in [fa, snp, hap] {
+    // The annotation files belong here like any other input: a graph built with
+    // splice sites is not the graph built without them, and a resume that took
+    // the wrong one would look like progress.
+    for f in [fa, snp, hap, ss, exon] {
         let m = std::fs::metadata(f).ok();
         let (len, mt) = match &m {
             Some(m) => (m.len(), m.modified().ok()

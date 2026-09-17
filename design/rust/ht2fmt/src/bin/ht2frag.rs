@@ -49,21 +49,17 @@ fn main() {
     // and the fragmented build below needs the splice-site edges that
     // `build_range_with` does not emit yet.
     if env::var("HT2_BOUNDS_ONLY").is_ok() { return; }
-    if !ss.is_empty() || !exon.is_empty() {
-        eprintln!("HT2_SS/HT2_EXON need HT2_BOUNDS_ONLY=1 until build_range_with handles them");
-        std::process::exit(2);
-    }
     drop(p);
 
     // HT2_FRAG_ONLY=1 builds only the fragmented path, so /usr/bin/time -l
     // measures its peak rather than the global build's.
     if std::env::var("HT2_FRAG_ONLY").is_ok() {
-        let f = graph::build_fragmented(&a[1], &a[2], &a[3], chunk);
+        let f = graph::build_fragmented_with(&a[1], &a[2], &a[3], &ss, &exon, chunk);
         println!("  fragmented: {} nodes, {} edges", f.nodes.len(), f.edges.len());
         return;
     }
-    let g = graph::build(&a[1], &a[2], &a[3]);
-    let f = graph::build_fragmented(&a[1], &a[2], &a[3], chunk);
+    let g = graph::build_with(&a[1], &a[2], &a[3], &ss, &exon);
+    let f = graph::build_fragmented_with(&a[1], &a[2], &a[3], &ss, &exon, chunk);
 
     println!("  global    : {} nodes, {} edges, last {}", g.nodes.len(), g.edges.len(), g.last_node);
     println!("  fragmented: {} nodes, {} edges, last {}", f.nodes.len(), f.edges.len(), f.last_node);

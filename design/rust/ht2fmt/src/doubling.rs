@@ -472,6 +472,13 @@ pub struct Doubled {
 pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
            verbose: bool, ck: &mut ckpt::Ckpt, resume: bool) -> std::io::Result<Doubled>
 {
+    run_with(fa, snp, hap, "", "", wd, budget, chunk, verbose, ck, resume)
+}
+
+pub fn run_with(fa: &str, snp: &str, hap: &str, ss: &str, exon: &str,
+                wd: &Path, budget: usize, chunk: u32,
+                verbose: bool, ck: &mut ckpt::Ckpt, resume: bool) -> std::io::Result<Doubled>
+{
     use std::io::Read;
     fs::create_dir_all(wd)?;
     // The node file alternates between two names. A generation reads one and
@@ -503,7 +510,7 @@ pub fn run(fa: &str, snp: &str, hap: &str, wd: &Path, budget: usize, chunk: u32,
         graph::GraphOnDisk { n_nodes: ck.g_nodes, n_edges: ck.g_edges,
                              last_node: ck.g_last, text_len: ck.g_text }
     } else {
-        let g = graph::build_fragmented_to_disk(fa, snp, hap, chunk, wd)?;
+        let g = graph::build_fragmented_to_disk_with(fa, snp, hap, ss, exon, chunk, wd)?;
         ck.stage = "graph".into();
         ck.g_nodes = g.n_nodes; ck.g_edges = g.n_edges;
         ck.g_last = g.last_node; ck.g_text = g.text_len;
