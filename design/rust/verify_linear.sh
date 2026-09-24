@@ -16,7 +16,17 @@
 #
 # usage: verify_linear.sh [hisat2_source_dir]
 set -uo pipefail
-SRC=${1:-/Users/iandriver/Downloads/hisat2}
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SRC=${1:-}
+if [ -z "${SRC:-}" ]; then
+    for c in "$HERE/../../../hisat2" "$HERE/../../hisat2" "$PWD/../hisat2"; do
+        [ -d "$c/example/reference" ] && SRC=$(cd "$c" && pwd) && break
+    done
+fi
+if [ -z "${SRC:-}" ] || [ ! -d "$SRC/example/reference" ]; then
+    echo "need a HISAT2 checkout: pass it as an argument, or put one beside this repo" >&2
+    exit 2
+fi
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BIN="$HERE/ht2fmt/target/release"
 REF="$SRC/example/reference/22_20-21M.fa"

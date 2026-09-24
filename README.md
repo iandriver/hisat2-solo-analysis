@@ -11,6 +11,44 @@ The code being measured lives on two branches there:
 | `upstream/modernize` | fixes that apply to HISAT2 generally — Python 3, C++17, `std::thread`, zlib, BAM output, build portability, variant retention |
 | `solo/gene-model` | the above plus single-cell: gene model, barcode/UMI, counting, allele-specific counting |
 
+## The index builder (`design/rust/ht2fmt`)
+
+`hisat2-build` needs the whole path graph resident. For a human graph index
+that measured 671 GB of RSS, which is the real reason variant-aware references
+stay unused: you cannot build one on hardware you have.
+
+`ht2wg` runs the same construction against disk. It is a Rust reimplementation
+of HISAT2's index format, written against `gfm.h` and `hgfm.h` rather than
+copied from them, and it is checked by byte-equality rather than by inspection.
+
+```sh
+cd design/rust/ht2fmt && cargo build --release      # no dependencies
+cd .. && ./mkfixtures.sh /tmp/fix ../../../hisat2   # derive the fixtures
+     ./verify.sh /tmp/fix ../../../hisat2           # ALL FIXTURES BYTE-IDENTICAL
+```
+
+A whole-genome build then looks like:
+
+```sh
+HT2_LARGE=1 HT2_THREADS=8 \
+  ht2wg genome.fa genome.snp genome.haplotype scratchdir out/genome 134217728
+```
+
+Peak RAM is bounded by `threads * budget * 18 bytes` plus about 4 GB for the
+reference stage, so roughly 19 GB at the settings above. Scratch is the cost
+instead: about 325 GB at the `generateEdges` peak, not at the generation-11
+node peak, so size the disk from the emit stage. It resumes by being re-run.
+
+`HT2_SS` and `HT2_EXON` add `--ss`/`--exon` annotation. Splice sites and exons
+enter the ALT table, splice sites add one backbone edge each, and exons never
+reach the graph. On GENCODE v32 that is 382,106 junctions and 324,668 exons,
+and it takes the longest uncuttable fragment from 1.06 Mb to 3.06 Mb without
+changing how many doublings the build needs.
+
+Verified against `hisat2-build` on the 1 Mb example reference and on chr22 with
+real GENCODE v32: all eight index files byte-identical, and the doubling curve
+matches generation for generation.
+
 ## Findings
 
 ### Variant-aware alignment reduces reference bias (`analysis/human`, `analysis/fiveprime`, `analysis/bias`)

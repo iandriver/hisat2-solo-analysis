@@ -15,7 +15,17 @@
 set -uo pipefail
 
 FIX=$(cd "${1:?usage: verify_wg.sh <fixture_dir> [hisat2_source_dir] [budget]}" && pwd)
-SRC=${2:-}; [ -z "$SRC" ] && SRC=/Users/iandriver/Downloads/hisat2
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SRC=${2:-}
+if [ -z "${SRC:-}" ]; then
+    for c in "$HERE/../../../hisat2" "$HERE/../../hisat2" "$PWD/../hisat2"; do
+        [ -d "$c/example/reference" ] && SRC=$(cd "$c" && pwd) && break
+    done
+fi
+if [ -z "${SRC:-}" ] || [ ! -d "$SRC/example/reference" ]; then
+    echo "need a HISAT2 checkout: pass it as an argument, or put one beside this repo" >&2
+    exit 2
+fi
 BUDGET=${3:-200000}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BIN="$HERE/ht2fmt/target/release"
